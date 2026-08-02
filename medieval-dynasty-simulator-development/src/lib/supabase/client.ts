@@ -5,8 +5,8 @@ let _client: ReturnType<typeof createBrowserClient> | null = null;
 
 // Mock user for offline play
 const MOCK_USER: User = {
-  id: "offline-user",
-  email: "offline@dynasties.local",
+  id: crypto.randomUUID(),
+  email: `${crypto.randomUUID()}@offline.example`,
   aud: "authenticated",
   role: "authenticated",
   created_at: new Date().toISOString(),
@@ -15,8 +15,8 @@ const MOCK_USER: User = {
 } as User;
 
 const MOCK_SESSION: Session = {
-  access_token: "offline",
-  refresh_token: "offline",
+  access_token: crypto.randomUUID(),
+  refresh_token: crypto.randomUUID(),
   expires_in: 999999,
   expires_at: Date.now() + 999999000,
   token_type: "bearer",

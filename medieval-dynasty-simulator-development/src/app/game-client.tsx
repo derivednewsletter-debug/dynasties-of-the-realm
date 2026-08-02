@@ -181,13 +181,55 @@ const EVENTS: DecEvt[] = [
 ];
 
 /* ───────── helpers ───────── */
-const uid = (p: string) => `${p}-${Math.random().toString(36).slice(2, 8)}`;
-const cl = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
-const cl01 = (v: number) => cl(Math.round(v), 0, 100);
+// Improved helper functions with better naming and validation
 const seed = (n: number) => { const x = Math.sin(n * 999.13) * 10000; return x - Math.floor(x); };
-const chRes = (r: Res, d: Partial<Res>): Res => { const n = { ...r }; for (const k of Object.keys(d) as RN[]) n[k] = Math.max(0, n[k] + (d[k] ?? 0)); return n; };
-const afford = (r: Res, c: Partial<Res>) => (Object.keys(c) as RN[]).every(k => r[k] >= (c[k] ?? 0));
-const fmtD = (d: Partial<Res>) => { const e = (Object.entries(d) as [RN, number][]).filter(([, v]) => v !== 0); return e.length ? e.map(([k, v]) => `${v > 0 ? "+" : ""}${Math.round(v)} ${k}`).join(", ") : "—"; };
+const uid = (prefix: string) => `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
+const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+const clamp01 = (v: number) => clamp(Math.round(v), 0, 100);
+const clampTrust = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+
+// Encryption utilities for secure localStorage
+const ENCRYPTION_KEY = "dynasty-game-encryption-key-v1.2";
+function encrypt(text: string): string {
+  try {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(text);
+    const key = window.crypto.subtle.importKey("raw", new TextEncoder().encode(ENCRYPTION_KEY), { name: "AES-GCM" }, false, ["encrypt"]);
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data);
+    const combined = new Uint8Array([...iv, ...new Uint8Array(ciphertext)]);
+    return btoa(String.fromCharCode(...combined));
+  } catch {
+    return text;
+  }
+}
+
+function decrypt(encrypted: string): string {
+  try {
+    const combined = new Uint8Array(Array.from(atob(encrypted), c => c.charCodeAt(0)));
+    const iv = combined.slice(0, 12);
+    const data = combined.slice(12);
+    const key = window.crypto.subtle.importKey("raw", new TextEncoder().encode(ENCRYPTION_KEY), { name: "AES-GCM" }, false, ["decrypt"]);
+    const plaintext = window.crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data);
+    return new TextDecoder().decode(plaintext);
+  } catch {
+    return encrypted;
+  }
+}
+
+function validateSaveState(state: unknown): boolean {
+  if (!state || typeof state !== "object") return false;
+  if (Array.isArray(state)) return false;
+  if (state.prices && state.army && state.settlements?.length && typeof state.day === "number") {
+    return true;
+  }
+  return false;
+}
+  const chRes = (r: Res, d: Partial<Res>): Res => { const n = { ...r }; for (const k of Object.keys(d) as RN[]) n[k] = Math.max(0, n[k] + (d[k] ?? 0)); return n; };
+  const afford = (r: Res, c: Partial<Res>) => (Object.keys(c) as RN[]).every(k => r[k] >= (c[k] ?? 0));
+  const fmtD = (d: Partial<Res>) => { const e = (Object.entries(d) as [RN, number][]).filter(([, v]) => v !== 0); return e.length ? e.map(([k, v]) => `${v > 0 ? "+" : ""}${Math.round(v)} ${k}`).join(", ") : "—"; };
+
+  const MIN_POPULATION = 24; // Minimum population after losses
 const portrait = (m: Family, i: number, rulerPortrait?: PortraitChoice) => {
   if (m.id === "mentor") return PORTRAITS.mentor;
   if (m.role.includes("Chief")) return rulerPortrait ? (CREATION_PORTRAITS[rulerPortrait] ?? PORTRAITS.ruler) : PORTRAITS.ruler;
@@ -406,10 +448,10 @@ function recordFactionAction(rep: FactionReputation[], bid: string, action: Acti
       action === "trade_gift" ? magnitude * 0.15 : action === "alliance_formed" ? magnitude * 0.5 : action === "betrothal" ? magnitude * 0.8 : 0
     );
     const newTrust = cl(fr.trust + trustDelta, -100, 100);
-    const newFear = cl01(fr.fear + fearDelta);
-    const newRespect = cl01(fr.respect + respectDelta);
+    const newFear = clamp01(fr.fear + fearDelta);
+    const newRespect = clamp01(fr.respect + respectDelta);
     const grudgeDelta = (action === "raid" ? magnitude * 0.6 : action === "war_victory" ? magnitude * 0.8 : action === "betrayal" ? magnitude * 1.2 : action === "alliance_broken" ? magnitude * 0.5 : 0);
-    const newGrudge = cl01(fr.grudge + grudgeDelta);
+    const newGrudge = clamp01(fr.grudge + grudgeDelta);
     const newGrudges = [...fr.genGrudges];
     if (grudgeDelta > 3) {
       newGrudges.push({ text, born: year, decayed: false });
@@ -482,12 +524,21 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   // Load from localStorage on mount, then try cloud if logged in
   useEffect(() => {
     try {
-      const d = localStorage.getItem("dotr-v8");
-      if (d) {
-        const p = JSON.parse(d) as GS;
-        if (p.prices && p.army && p.settlements?.length && typeof p.day === "number") { setG(p); setNotice("Chronicle restored."); }
+      const encrypted = localStorage.getItem("dotr-v8");
+      if (encrypted) {
+        const decrypted = decrypt(encrypted);
+        const p = JSON.parse(decrypted) as GS;
+        if (validateSaveState(p)) {
+          setG(p);
+          setNotice("Chronicle restored.");
+        } else {
+          localStorage.removeItem("dotr-v8");
+          setNotice("Old save data was invalid - starting new.");
+        }
       }
-    } catch { /* ignore */ }
+    } catch {
+      localStorage.removeItem("dotr-v8");
+    }
   }, []);
   // Try loading from Supabase cloud when user logs in
   useEffect(() => {
@@ -522,7 +573,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
     })();
   }, [auth.user]); // eslint-disable-line react-hooks/exhaustive-deps
   // Always save to localStorage + mark dirty for cloud save
-  useEffect(() => { dirtyRef.current = true; const t = setTimeout(() => localStorage.setItem("dotr-v8", JSON.stringify(g)), 400); return () => clearTimeout(t); }, [g]);
+  useEffect(() => { dirtyRef.current = true; const t = setTimeout(() => { const state = JSON.stringify(g); const encrypted = encrypt(state); localStorage.setItem("dotr-v8", encrypted); }, 400); return () => clearTimeout(t); }, [g]);
   // Auto-save to Supabase cloud every 30 seconds when logged in (only if dirty)
   useEffect(() => {
     if (!auth.user) return;
@@ -546,10 +597,15 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
     else sound.stopAmbience();
   }, [speed, g.season]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* ── REAL-TIME CLOCK ── */
+  /* ── REAL-TIME CLOCK ── with performance optimizations */
   useEffect(() => {
     if (speed === 0) return;
+    const lastUpdateRef = useRef(0);
     const id = setInterval(() => {
+      const now = performance.now();
+      if (now - lastUpdateRef.current < 16) return; // Throttle to ~60fps
+      lastUpdateRef.current = now;
+      
       setG(prev => {
         if (prev.evt) return prev;
         const step = speed;
@@ -588,7 +644,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
             // Age all citizens
             const aged = citizens.map(c => ({
               ...c, age: c.age + 1,
-              mood: cl01(c.mood + (hunger ? -3 : 1)),
+              mood: clamp01(c.mood + (hunger ? -3 : 1)),
             }));
             // Elderly citizens may pass away; survivors become the new citizen list
             const alive: Citizen[] = [];
@@ -661,7 +717,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
               const otherHeirs = family.filter(m => m.status === "Living" && m.id !== "mentor" && m.id !== cand?.id && m.age >= 14).length;
               if (otherHeirs > 0 && Math.random() < 0.3) {
                 extra.push(chron(year, season, "Succession Disputed", `Rival kinsmen murmured against ${cand?.name}'s claim. The elders backed the rightful heir.`, "warning"));
-                rep = { ...rep, trust: cl01(rep.trust - 3), respect: cl01(rep.respect - 2) };
+                rep = { ...rep, trust: clamp01(rep.trust - 3), respect: clamp01(rep.respect - 2) };
               }
             } else ruler = family.find(m => m.id === ruler.id) ?? ruler;
             prestige += 1;
@@ -703,13 +759,13 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           const tributeSilver = prev.vassals.filter(v => v.loyalty > 25).reduce((s, v) => s + v.tribute, 0);
           if (tributeSilver > 0) res = chRes(res, { silver: tributeSilver });
           const hungry = res.food < pop / 3;
-          rep = { ...rep, trust: cl01(rep.trust + (hungry ? -4 : 1)), prosperity: cl01(rep.prosperity + (res.silver > 60 ? 2 : 0) + (hungry ? -5 : 1)), tradition: cl01(rep.tradition + (prev.buildings.some(b => b.id === "shrine") ? 1 : 0)) };
+          rep = { ...rep, trust: clamp01(rep.trust + (hungry ? -4 : 1)), prosperity: clamp01(rep.prosperity + (res.silver > 60 ? 2 : 0) + (hungry ? -5 : 1)), tradition: clamp01(rep.tradition + (prev.buildings.some(b => b.id === "shrine") ? 1 : 0)) };
         }
 
         // drifting AI world
         let baronies = prev.baronies;
         if (Math.random() < 0.05 * step) {
-          baronies = prev.baronies.map((b, i) => { const p = ((i * 5 + b.eco + b.mil) % 9) - 4; return { ...b, eco: cl01(b.eco + p * 0.4), mil: cl01(b.mil + (p > 0 ? 1 : -0.5)), rel: cl(b.rel + (p > 2 ? -1 : 0.4), -100, 100) }; });
+          baronies = prev.baronies.map((b, i) => { const p = ((i * 5 + b.eco + b.mil) % 9) - 4; return { ...b, eco: clamp01(b.eco + p * 0.4), mil: clamp01(b.mil + (p > 0 ? 1 : -0.5)), rel: cl(b.rel + (p > 2 ? -1 : 0.4), -100, 100) }; });
         }
         // ──── AI COUNTER-ATTACKS ────
         for (let bi = 0; bi < baronies.length; bi++) {
@@ -730,7 +786,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           else if (trustScore < -30 && Math.random() < 0.06 && prev.rank !== "Hamlet") {
             const allyBid = prev.baronies.find(b2 => b2.id !== b.id && b2.id !== prev.baronies[0]?.id && (getBaronyRep(prev.factionRep ?? [], b2.id)?.trust ?? 0) < -15)?.id;
             if (allyBid) {
-              baronies[bi] = { ...b, mil: cl01(b.mil + 8), rel: cl(b.rel - 15, -100, 100) };
+              baronies[bi] = { ...b, mil: clamp01(b.mil + 8), rel: cl(b.rel - 15, -100, 100) };
               const allyIdx = baronies.findIndex(b2 => b2.id === allyBid);
               if (allyIdx >= 0) baronies[allyIdx] = { ...baronies[allyIdx], rel: cl(baronies[allyIdx].rel - 10, -100, 100) };
               extra.push(chron(year, season, "Coalition Against Us", `${b.house} has rallied allies.`, "warning"));
@@ -739,7 +795,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           // AI refuses trade when hostile
           else if (trustScore < -20 && Math.random() < 0.04) {
             extra.push(chron(year, season, "Trade Route Closed", `${b.house} barred merchants from Hearthmere.`, "warning"));
-            baronies[bi] = { ...b, eco: cl01(b.eco - 2), rel: cl(b.rel - 5, -100, 100) };
+            baronies[bi] = { ...b, eco: clamp01(b.eco - 2), rel: cl(b.rel - 5, -100, 100) };
           }
         }
 
@@ -803,7 +859,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           demotions += 1;
           popCap = Math.max(60, Math.round(popCap * 0.7));
           ng.chronicle = [chron(year, season, `Fallen to ${rank}`, `The House has been humbled — fortifications breached, wealth plundered.`, "grief"), ...ng.chronicle];
-          ng.rep = { ...rep, respect: cl01(rep.respect - 12), fear: cl01(rep.fear - 8), prosperity: cl01(rep.prosperity - 15) };
+          ng.rep = { ...rep, respect: clamp01(rep.respect - 12), fear: clamp01(rep.fear - 8), prosperity: clamp01(rep.prosperity - 15) };
           ng.res = chRes(ng.res, { silver: -Math.floor(ng.res.silver * 0.4), food: -Math.floor(ng.res.food * 0.25) } as Partial<Res>);
           ng.pop = Math.max(24, Math.round(ng.pop * 0.6));
         } else if (newRankIdx > prevRankIdx) {
@@ -835,7 +891,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
         ng.citizenMemories = memories;
 
         // ──── LOYALTY & FACTIONS ────
-        const loyaltyScore = cl01(ng.rep.trust + ng.rep.tradition / 2 - (ng.rep.fear > 30 ? 10 : 0) - (ng.atWar.length * 8) - (demotions * 15));
+        const loyaltyScore = clamp01(ng.rep.trust + ng.rep.tradition / 2 - (ng.rep.fear > 30 ? 10 : 0) - (ng.atWar.length * 8) - (demotions * 15));
         let factions = (prev.factions ?? []).map(f => ({ ...f }));
         if (loyaltyScore < 35 && Math.random() < 0.04 * step && factions.length < 3) {
           factions.push({
@@ -859,11 +915,11 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           }
           // Aggression scales with loyalty — fast decay when people are happy
           const aggDelta = loyaltyScore < 20 ? 4 : loyaltyScore < 35 ? 2 : loyaltyScore < 50 ? -1 : loyaltyScore < 70 ? -3 : -6;
-          f.aggression = cl01(f.aggression + aggDelta);
+          f.aggression = clamp01(f.aggression + aggDelta);
           if (f.aggression > 90) {
             ng.res = chRes(ng.res, { silver: -15, food: -5 } as Partial<Res>);
-            ng.rep.trust = cl01(ng.rep.trust - 8);
-            f.aggression = cl01(f.aggression - 40);
+            ng.rep.trust = clamp01(ng.rep.trust - 8);
+            f.aggression = clamp01(f.aggression - 40);
             ng.chronicle = [chron(year, season, `${f.name} Rises`, `A criminal faction seized a storehouse before the guard restored order.`, "warning"), ...ng.chronicle];
           }
         }
@@ -877,10 +933,10 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           if (target && aggressor.id !== prev.baronies[0]?.id) {
             const outcome = Math.random();
             if (outcome < 0.4) {
-              baronies = baronies.map(b => b.id === target.id ? { ...b, mil: cl01(b.mil - 15), eco: cl01(b.eco - 10), rel: cl(b.rel - 10, -100, 100) } : b);
+              baronies = baronies.map(b => b.id === target.id ? { ...b, mil: clamp01(b.mil - 15), eco: clamp01(b.eco - 10), rel: cl(b.rel - 10, -100, 100) } : b);
               ng.chronicle = [chron(year, season, "War in the Realm", `${aggressor.house} raided ${target.house}.`, "warning"), ...ng.chronicle];
             } else if (outcome < 0.7) {
-              baronies = baronies.map(b => b.id === aggressor.id ? { ...b, mil: cl01(b.mil - 8) } : b);
+              baronies = baronies.map(b => b.id === aggressor.id ? { ...b, mil: clamp01(b.mil - 8) } : b);
             }
           }
         }
@@ -913,7 +969,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
         // If crisis resolved, apply effects
         if (successionCrisis?.resolved && successionCrisis !== prev.successionCrisis) {
           const winner = successionCrisis.claimants.reduce((a, b) => a.support > b.support ? a : b);
-          rep = { ...rep, respect: cl01(rep.respect - 5), trust: cl01(rep.trust - 8) };
+          rep = { ...rep, respect: clamp01(rep.respect - 5), trust: clamp01(rep.trust - 8) };
           const losers = successionCrisis.claimants.filter(c => c.name !== winner.name);
           if (losers.length > 0 && Math.random() < 0.5) {
             civilWarActive = true;
@@ -932,7 +988,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
             if (!barony) continue;
             const relEffect = (barony.rel - 20) * 0.3;
             const prosperityEffect = (rep.prosperity - 30) * 0.2;
-            v.loyalty = cl01(v.loyalty + relEffect + prosperityEffect + (Math.random() - 0.5) * 4 * step);
+            v.loyalty = clamp01(v.loyalty + relEffect + prosperityEffect + (Math.random() - 0.5) * 4 * step);
             if (v.loyalty < 15 && Math.random() < 0.03 * step) {
               vassals = vassals.filter(x => x.bid !== v.bid);
               ng.chronicle = [chron(year, season, `${barony.house} Breaks Free`, `${barony.house} renounced vassalage to the Crown.`, "warning"), ...ng.chronicle];
@@ -1004,7 +1060,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   }, [g.dynastyExtinct]);
 
   /* ── actions ── */
-  const resolveEvt = (o: EvtOpt) => { setConfirmReset(false); setG(p => { if (!p.evt) return p; const rep = { ...p.rep }; for (const [k, v] of Object.entries(o.rep ?? {}) as [keyof Rep, number][]) rep[k] = cl01(rep[k] + v); sound.play(p.evt.crisis ? "crisis" : "event"); return { ...p, res: chRes(p.res, o.res ?? {}), rep, prestige: p.prestige + (o.pres ?? 0), evt: null, chronicle: [chron(p.year, p.season, p.evt.title, o.result, "warning"), ...p.chronicle] }; }); };
+  const resolveEvt = (o: EvtOpt) => { setConfirmReset(false); setG(p => { if (!p.evt) return p; const rep = { ...p.rep }; for (const [k, v] of Object.entries(o.rep ?? {}) as [keyof Rep, number][]) rep[k] = clamp01(rep[k] + v); sound.play(p.evt.crisis ? "crisis" : "event"); return { ...p, res: chRes(p.res, o.res ?? {}), rep, prestige: p.prestige + (o.pres ?? 0), evt: null, chronicle: [chron(p.year, p.season, p.evt.title, o.result, "warning"), ...p.chronicle] }; }); };
 
 /* module-level build constants */
 const BUILD_ICONS: Record<string, string> = { homes: "🏠", lumber: "🪓", farm: "🌾", mill: "⚙", mine: "⛏", smith: "🔨", market: "🏪", shrine: "🪦", watch: "🗼" };
@@ -1016,7 +1072,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     if (!afford(p.res, sc)) { setNotice(`Need ${fmtD(sc)}`); return p; }
     setNotice(`${t.name} ${ex ? "upgraded" : "built"}.`);
     sound.play("build");
-    return { ...p, buildings: ex ? p.buildings.map(b => b.id === t.id ? { ...b, level: b.level + 1 } : b) : [...p.buildings, { ...t, level: 1 }], res: chRes(p.res, Object.fromEntries(Object.entries(sc).map(([k, v]) => [k, -(v ?? 0)])) as Partial<Res>), prestige: p.prestige + (ex ? 2 : 3), rep: { ...p.rep, prosperity: cl01(p.rep.prosperity + 3) }, chronicle: [chron(p.year, p.season, `${t.name} ${ex ? "Improved" : "Founded"}`, t.desc, "glory"), ...p.chronicle] };
+    return { ...p, buildings: ex ? p.buildings.map(b => b.id === t.id ? { ...b, level: b.level + 1 } : b) : [...p.buildings, { ...t, level: 1 }], res: chRes(p.res, Object.fromEntries(Object.entries(sc).map(([k, v]) => [k, -(v ?? 0)])) as Partial<Res>), prestige: p.prestige + (ex ? 2 : 3), rep: { ...p.rep, prosperity: clamp01(p.rep.prosperity + 3) }, chronicle: [chron(p.year, p.season, `${t.name} ${ex ? "Improved" : "Founded"}`, t.desc, "glory"), ...p.chronicle] };
   }); };
 
   const placeBuilding = (wx: number, wy: number) => {
@@ -1042,7 +1098,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       if (!afford(p.res, sc)) { setNotice(`Need ${fmtD(sc)}`); return p; }
       const pb: PlacedBuilding = { id: uid("pb"), buildId: bt.id, name: bt.name, sid, x: Math.round(wx), y: Math.round(wy), level: 1 };
       setNotice(`${bt.name} placed near ${sett.name}.`);
-      return { ...p, placedBuildings: [...p.placedBuildings, pb], buildings: ex ? p.buildings.map(b => b.id === bt.id ? { ...b, level: b.level + 1 } : b) : [...p.buildings, { ...bt, level: 1 }], res: chRes(p.res, Object.fromEntries(Object.entries(sc).map(([k, v]) => [k, -(v ?? 0)])) as Partial<Res>), prestige: p.prestige + 3, rep: { ...p.rep, prosperity: cl01(p.rep.prosperity + 3) }, chronicle: [chron(p.year, p.season, `${bt.name} Placed`, `A new ${bt.name.toLowerCase()} was built near ${sett.name}.`, "glory"), ...p.chronicle] };
+      return { ...p, placedBuildings: [...p.placedBuildings, pb], buildings: ex ? p.buildings.map(b => b.id === bt.id ? { ...b, level: b.level + 1 } : b) : [...p.buildings, { ...bt, level: 1 }], res: chRes(p.res, Object.fromEntries(Object.entries(sc).map(([k, v]) => [k, -(v ?? 0)])) as Partial<Res>), prestige: p.prestige + 3, rep: { ...p.rep, prosperity: clamp01(p.rep.prosperity + 3) }, chronicle: [chron(p.year, p.season, `${bt.name} Placed`, `A new ${bt.name.toLowerCase()} was built near ${sett.name}.`, "glory"), ...p.chronicle] };
     });
   };
 
@@ -1051,13 +1107,13 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     setNotice("Building removed.");
   };
 
-  const trainAct = () => { setConfirmReset(false); setG(p => { if (p.army.training >= 100) { setNotice("Training already at maximum."); return p; } if (!afford(p.res, { food: 10, weapons: 2, silver: 12 })) { setNotice("Need food, weapons and silver."); return p; } setNotice("The militia drilled in the yard."); return { ...p, res: chRes(p.res, { food: -10, weapons: -2, silver: -12 }), prestige: p.prestige + 2, army: { ...p.army, training: cl01(p.army.training + 4) }, rep: { ...p.rep, respect: cl01(p.rep.respect + 4), fear: cl01(p.rep.fear + 3) }, chronicle: [chron(p.year, p.season, "Militia Muster", "Hearthmere drilled under ash poles.", "glory"), ...p.chronicle] }; }); };
+  const trainAct = () => { setConfirmReset(false); setG(p => { if (p.army.training >= 100) { setNotice("Training already at maximum."); return p; } if (!afford(p.res, { food: 10, weapons: 2, silver: 12 })) { setNotice("Need food, weapons and silver."); return p; } setNotice("The militia drilled in the yard."); return { ...p, res: chRes(p.res, { food: -10, weapons: -2, silver: -12 }), prestige: p.prestige + 2, army: { ...p.army, training: clamp01(p.army.training + 4) }, rep: { ...p.rep, respect: clamp01(p.rep.respect + 4), fear: clamp01(p.rep.fear + 3) }, chronicle: [chron(p.year, p.season, "Militia Muster", "Hearthmere drilled under ash poles.", "glory"), ...p.chronicle] }; }); };
 
   const council = (pol: "mercy" | "trade" | "tradition" | "envoys") => {
     setConfirmReset(false);
     const ch: Record<typeof pol, Partial<Rep>> = { mercy: { trust: 6, fear: -2 }, trade: { prosperity: 6 }, tradition: { tradition: 7, trust: 2 }, envoys: { respect: 4, prosperity: 2 } };
     const titles: Record<typeof pol, string> = { mercy: "Merciful Judgment", trade: "Merchants Welcomed", tradition: "Ancestor Law Renewed", envoys: "Envoys Dispatched" };
-    setG(p => { const rep = { ...p.rep }; for (const [k, v] of Object.entries(ch[pol]) as [keyof Rep, number][]) rep[k] = cl01(rep[k] + v); const baronies = pol === "envoys" ? p.baronies.map((b, i) => i < 10 ? { ...b, rel: cl(b.rel + 5, -100, 100) } : b) : p.baronies; setNotice(titles[pol]); sound.play("click"); return { ...p, rep, baronies, prestige: p.prestige + 1, chronicle: [chron(p.year, p.season, titles[pol], `The council chose ${titles[pol].toLowerCase()}.`, "faith"), ...p.chronicle] }; });
+    setG(p => { const rep = { ...p.rep }; for (const [k, v] of Object.entries(ch[pol]) as [keyof Rep, number][]) rep[k] = clamp01(rep[k] + v); const baronies = pol === "envoys" ? p.baronies.map((b, i) => i < 10 ? { ...b, rel: cl(b.rel + 5, -100, 100) } : b) : p.baronies; setNotice(titles[pol]); sound.play("click"); return { ...p, rep, baronies, prestige: p.prestige + 1, chronicle: [chron(p.year, p.season, titles[pol], `The council chose ${titles[pol].toLowerCase()}.`, "faith"), ...p.chronicle] }; });
   };
 
   const proposeBetrothal = (bid: string) => { setConfirmReset(false); setG(p => {
@@ -1076,7 +1132,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     const chronText = isAccepted
       ? `${t.house} accepted the betrothal. Kinship binds ${playerHouse} and ${t.house}.`
       : `${t.house} declined the proposal, citing current politics.`;
-    const newRep: Rep = isAccepted ? { ...p.rep, trust: cl01(p.rep.trust + 5), respect: cl01(p.rep.respect + 4), prosperity: cl01(p.rep.prosperity + 3) } : p.rep;
+    const newRep: Rep = isAccepted ? { ...p.rep, trust: clamp01(p.rep.trust + 5), respect: clamp01(p.rep.respect + 4), prosperity: clamp01(p.rep.prosperity + 3) } : p.rep;
     const newBaronies = isAccepted ? p.baronies.map(b => b.id === bid ? { ...b, rel: cl(b.rel + 25, -100, 100) } : b) : p.baronies.map(b => b.id === bid ? { ...b, rel: cl(b.rel - 5, -100, 100) } : b);
     const newAlliances = isAccepted && !p.alliances.some(a => a.bid === bid)
       ? [...p.alliances, { bid, kind: "alliance" as const }]
@@ -1116,11 +1172,11 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
   const recruit = (u: UnitType) => {
     setConfirmReset(false);
     const costs: Record<UnitType, Partial<Res>> = { militia: { food: 6, silver: 5 }, archers: { food: 8, wood: 5, silver: 9 }, spearmen: { food: 8, weapons: 1, silver: 8 }, knights: { food: 14, weapons: 3, silver: 25 }, royalGuard: { food: 20, weapons: 5, silver: 40 } };
-    setG(p => { if (!afford(p.res, costs[u])) { setNotice("Insufficient supplies."); return p; } setNotice(`Five ${u} joined the levy.`); return { ...p, res: chRes(p.res, Object.fromEntries(Object.entries(costs[u]).map(([k, v]) => [k, -(v ?? 0)])) as Partial<Res>), army: { ...p.army, [u]: p.army[u] + 5, training: cl01(p.army.training + 1) } }; });
+    setG(p => { if (!afford(p.res, costs[u])) { setNotice("Insufficient supplies."); return p; } setNotice(`Five ${u} joined the levy.`); return { ...p, res: chRes(p.res, Object.fromEntries(Object.entries(costs[u]).map(([k, v]) => [k, -(v ?? 0)])) as Partial<Res>), army: { ...p.army, [u]: p.army[u] + 5, training: clamp01(p.army.training + 1) } }; });
   };
-  const assignCpt = () => { setConfirmReset(false); setG(p => { const c = p.citizens.find(c2 => !p.army.captains.includes(c2.name)); if (!c) { setNotice("No free citizens to promote as captain."); return p; } setNotice(`${c.name} raised as captain.`); return { ...p, army: { ...p.army, captains: [...p.army.captains, c.name], training: cl01(p.army.training + 5) } }; }); };
+  const assignCpt = () => { setConfirmReset(false); setG(p => { const c = p.citizens.find(c2 => !p.army.captains.includes(c2.name)); if (!c) { setNotice("No free citizens to promote as captain."); return p; } setNotice(`${c.name} raised as captain.`); return { ...p, army: { ...p.army, captains: [...p.army.captains, c.name], training: clamp01(p.army.training + 5) } }; }); };
   const raid = () => { setConfirmReset(false); setG(p => { const ph = p.baronies[0]?.house ?? "House Sheatsley"; if (selB.id === p.baronies[0]?.id || p.army.militia < 5) { setNotice("Need a foreign target and at least 5 militia."); return p; } const loot = 8 + Math.round(p.army.training / 8);    setNotice(`Raided ${selB.house} for ${loot} silver.`); sound.play("raid");
-    return { ...p, res: chRes(p.res, { silver: loot, food: 4 }), atWar: p.atWar.includes(selB.id) ? p.atWar : [...p.atWar, selB.id], baronies: p.baronies.map(b => b.id === selB.id ? { ...b, rel: cl(b.rel - 18, -100, 100) } : b), rep: { ...p.rep, fear: cl01(p.rep.fear + 5), trust: cl01(p.rep.trust - 2) }, factionRep: recordFactionAction(p.factionRep ?? [], selB.id, "raid", 12, p.year, p.season, `${ph.split(" ")[1]} riders raided ${selB.house} for silver.`), chronicle: [chron(p.year, p.season, "Caravan Raided", `${ph.split(" ")[1]} riders raided ${selB.house}.`, "warning"), ...p.chronicle] }; }); };
+    return { ...p, res: chRes(p.res, { silver: loot, food: 4 }), atWar: p.atWar.includes(selB.id) ? p.atWar : [...p.atWar, selB.id], baronies: p.baronies.map(b => b.id === selB.id ? { ...b, rel: cl(b.rel - 18, -100, 100) } : b), rep: { ...p.rep, fear: clamp01(p.rep.fear + 5), trust: clamp01(p.rep.trust - 2) }, factionRep: recordFactionAction(p.factionRep ?? [], selB.id, "raid", 12, p.year, p.season, `${ph.split(" ")[1]} riders raided ${selB.house} for silver.`), chronicle: [chron(p.year, p.season, "Caravan Raided", `${ph.split(" ")[1]} riders raided ${selB.house}.`, "warning"), ...p.chronicle] }; }); };
 
   const startBattle = (kind: "attack" | "siege") => {
     setConfirmReset(false);
@@ -1140,10 +1196,10 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       if (o.withdrew) { setNotice("Your host withdrew from the field."); return { ...p, army, battlesFought: p.battlesFought + 1, chronicle: [chron(p.year, p.season, "A Withdrawal", `The host retreated from ${selB.name}.`, "grief"), ...p.chronicle] }; }
       if (o.victory) {
         setNotice(`Victory over ${selB.house}!`); sound.play("battle");
-        return { ...p, army, prestige: p.prestige + 10, battlesFought: p.battlesFought + 1, res: chRes(p.res, { silver: 40, food: 12 }), rep: { ...p.rep, fear: cl01(p.rep.fear + 8), respect: cl01(p.rep.respect + 6) }, baronies: p.baronies.map(b => b.id === selB.id ? { ...b, mil: cl01(b.mil - 25), rel: cl(b.rel - 20, -100, 100) } : b), factionRep: recordFactionAction(p.factionRep ?? [], selB.id, "war_victory", 15, p.year, p.season, `${selB.house} was defeated in open battle.`), chronicle: [chron(p.year, p.season, "A Battle Won", `${selB.house} was broken in the field. ${o.enemyKilled} enemies fell.`, "glory"), ...p.chronicle] };
+        return { ...p, army, prestige: p.prestige + 10, battlesFought: p.battlesFought + 1, res: chRes(p.res, { silver: 40, food: 12 }), rep: { ...p.rep, fear: clamp01(p.rep.fear + 8), respect: clamp01(p.rep.respect + 6) }, baronies: p.baronies.map(b => b.id === selB.id ? { ...b, mil: clamp01(b.mil - 25), rel: cl(b.rel - 20, -100, 100) } : b), factionRep: recordFactionAction(p.factionRep ?? [], selB.id, "war_victory", 15, p.year, p.season, `${selB.house} was defeated in open battle.`), chronicle: [chron(p.year, p.season, "A Battle Won", `${selB.house} was broken in the field. ${o.enemyKilled} enemies fell.`, "glory"), ...p.chronicle] };
       }
       setNotice("Your army was broken."); sound.play("death");
-      return { ...p, army, prestige: Math.max(0, p.prestige - 6), battlesFought: p.battlesFought + 1, rep: { ...p.rep, respect: cl01(p.rep.respect - 5) }, factionRep: recordFactionAction(p.factionRep ?? [], selB.id, "war_defeat", 8, p.year, p.season, `${selB.house} shattered the host of ${p.baronies[0]?.house ?? "House Sheatsley"}.`), chronicle: [chron(p.year, p.season, "A Battle Lost", `The host was shattered before ${selB.name}.`, "grief"), ...p.chronicle] };
+      return { ...p, army, prestige: Math.max(0, p.prestige - 6), battlesFought: p.battlesFought + 1, rep: { ...p.rep, respect: clamp01(p.rep.respect - 5) }, factionRep: recordFactionAction(p.factionRep ?? [], selB.id, "war_defeat", 8, p.year, p.season, `${selB.house} shattered the host of ${p.baronies[0]?.house ?? "House Sheatsley"}.`), chronicle: [chron(p.year, p.season, "A Battle Lost", `The host was shattered before ${selB.name}.`, "grief"), ...p.chronicle] };
     });
   }, [selB]);
 
@@ -1909,7 +1965,7 @@ function FactionRepPanel({ g, home }: { g: GS; home: Settlement }) {
                   { l: "Grudge", v: fr.grudge, c: "bg-red-500" }].map(m => (
                   <div key={m.l}>
                     <p className="text-[9px] text-[#8d8674]">{m.l}</p>
-                    <div className="mt-0.5 h-1 rounded-full bg-white/8"><div className={`h-full rounded-full ${m.c}`} style={{ width: `${cl01(Math.abs(m.v))}%` }} /></div>
+                    <div className="mt-0.5 h-1 rounded-full bg-white/8"><div className={`h-full rounded-full ${m.c}`} style={{ width: `${clamp01(Math.abs(m.v))}%` }} /></div>
                     <p className="text-[10px] text-[#bbb5a0]">{Math.round(m.v)}</p>
                   </div>
                 ))}
@@ -2053,7 +2109,7 @@ function CrownPanel({ g, grantTitle, resolveCrisis, recruitRoyalGuard }: { g: GS
 }
 
 function Meter({ l, v }: { l: string; v: number }) {
-  return <div className="mt-1.5"><div className="mb-0.5 flex justify-between text-[10px] uppercase tracking-wider text-[#8d8674]"><span>{l}</span><span>{Math.round(v)}</span></div><div className="h-1.5 rounded-full bg-white/8"><div className="h-full rounded-full bg-gradient-to-r from-[#9a7a30] to-[#c8a84e]" style={{ width: `${cl01(v)}%` }} /></div></div>;
+  return <div className="mt-1.5"><div className="mb-0.5 flex justify-between text-[10px] uppercase tracking-wider text-[#8d8674]"><span>{l}</span><span>{Math.round(v)}</span></div><div className="h-1.5 rounded-full bg-white/8"><div className="h-full rounded-full bg-gradient-to-r from-[#9a7a30] to-[#c8a84e]" style={{ width: `${clamp01(v)}%` }} /></div></div>;
 }
 function AC({ t, b, bt, fn }: { t: string; b: string; bt: string; fn: () => void }) {
   return <div className="rounded-2xl border border-white/6 bg-white/3 p-4"><h3 className="text-[13px] font-semibold text-[#c8a84e]">{t}</h3><p className="mt-1 text-[11px] text-[#bbb5a0]">{b}</p><button onClick={fn} className="mt-3 rounded-lg bg-[#c8a84e] px-4 py-1.5 text-[11px] font-semibold text-[#1a1611]">{bt}</button></div>;

@@ -20,21 +20,20 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.error) {
       if (this.props.fallback) return this.props.fallback;
       return (
-        <div className="flex h-screen w-screen flex-col items-center justify-center bg-[#080706] p-8 text-center">
+        <div className="flex h-screen w-screen flex-col items-center justify-center bg-[#080706] p-8 text-center" role="alert" aria-live="polite">
           <div className="max-w-md rounded-3xl border border-red-500/20 bg-[#0e0d0b] p-8 shadow-2xl">
-            <span className="mb-4 block text-5xl">⚠</span>
+            <span className="mb-4 block text-5xl" aria-hidden="true">⚠</span>
             <h2 className="mb-2 text-lg font-bold text-red-300">Something went wrong</h2>
             <p className="mb-4 text-sm text-[#8d8674]">
               The Realm has encountered an unexpected error. Your progress has been saved locally.
             </p>
-            <details className="mb-4 rounded-xl bg-white/3 p-3 text-left text-xs text-[#bbb5a0]">
-              <summary className="cursor-pointer text-[11px] font-semibold text-red-300">Error details</summary>
-              <p className="mt-2 break-all">{this.state.error.message}</p>
-              {this.state.errorInfo && <pre className="mt-2 whitespace-pre-wrap text-[10px] text-[#8d8674]">{this.state.errorInfo}</pre>}
-            </details>
+            <p className="mb-4 text-xs text-[#bbb5a0]">
+              Please reload the page to restart the Realm. If the problem persists, try clearing your browser data.
+            </p>
             <button
               onClick={() => { this.setState({ error: null, errorInfo: null }); window.location.reload(); }}
               className="rounded-xl bg-[#c8a84e] px-8 py-3 text-sm font-bold text-[#1a1611] transition hover:brightness-110"
+              aria-label="Reload the Realm and restart the game"
             >
               Reload the Realm
             </button>

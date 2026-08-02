@@ -44,6 +44,10 @@ const STATS: Record<UnitType, { speed: number; range: number; dps: number; icon:
   royalGuard: { speed: 56, range: 18, dps: 7.2, icon: "♚", label: "Royal Guard", color: "#c8a84e" },
 };
 
+// Battle simulation constants
+const MIN_POPULATION = 24;
+
+// Battle terrain constants
 const FORESTS = [
   { x: 250, y: 330, r: 150 },
   { x: 1360, y: 560, r: 165 },
@@ -53,6 +57,22 @@ const FORESTS = [
 const HILL = { x: 1180, y: 300, r: 175 };
 const RIVER_Y = 470, RIVER_H = 54;
 const WALL_Y = 210, WALL_X1 = 380, WALL_X2 = 1220, GATE_X1 = 740, GATE_X2 = 870;
+
+// Battle control keys for accessibility
+const KEY_BINDINGS = {
+  'ArrowUp': 'move-up',
+  'ArrowDown': 'move-down', 
+  'ArrowLeft': 'move-left',
+  'ArrowRight': 'move-right',
+  'KeyW': 'move-up',
+  'KeyS': 'move-down',
+  'KeyA': 'move-left',
+  'KeyD': 'move-right',
+  'Space': 'pause',
+  'Escape': 'cancel',
+  'KeyH': 'help',
+  'KeyC': 'center-view'
+} as const;
 
 function inCircle(x: number, y: number, c: { x: number; y: number; r: number }) {
   return Math.hypot(x - c.x, y - c.y) < c.r;
