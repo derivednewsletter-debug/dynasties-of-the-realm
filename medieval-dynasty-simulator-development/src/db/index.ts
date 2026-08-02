@@ -8,36 +8,30 @@ const globalForDb = globalThis as typeof globalThis & {
 };
 
 let _db: NodePgDatabase | null = null;
-let _initialized = false;
+let _initPromise: Promise<NodePgDatabase | null> | null = null;
 
-async function ensureDb(): Promise<NodePgDatabase | null> {
-  if (_initialized) return _db;
-  _initialized = true;
-
+async function doInit(): Promise<NodePgDatabase | null> {
+  if (_db) return _db;
   if (!databaseUrl) return null;
 
   try {
-    // Dynamic imports — only loaded when DATABASE_URL is actually set
     const { Pool } = await import("pg");
     const { drizzle } = await import("drizzle-orm/node-postgres");
 
-    if (globalForDb.__arenaNextJsPostgresqlPool) {
-      const pool = globalForDb.__arenaNextJsPostgresqlPool;
-      _db = drizzle(pool);
-    } else {
-      const pool = new Pool({ connectionString: databaseUrl });
-      if (process.env.NODE_ENV !== "production") {
-        globalForDb.__arenaNextJsPostgresqlPool = pool;
-      }
-      _db = drizzle(pool);
+    const pool = globalForDb.__arenaNextJsPostgresqlPool ?? new Pool({ connectionString: databaseUrl });
+    if (process.env.NODE_ENV !== "production") {
+      globalForDb.__arenaNextJsPostgresqlPool = pool;
     }
 
+    _db = drizzle(pool);
     return _db;
   } catch {
-    // pg or drizzle-orm failed to load — game works offline
     return null;
   }
 }
 
-// Async initializer — call this in server components/API routes
-export { ensureDb };
+// Singleton initializer — concurrent callers share the same promise
+export function ensureDb(): Promise<NodePgDatabase | null> {
+  if (!_initPromise) _initPromise = doInit();
+  return _initPromise;
+}

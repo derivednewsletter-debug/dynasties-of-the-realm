@@ -2,6 +2,16 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import type { Session, User } from "@supabase/supabase-js";
 
+const MOCK_USER: User = {
+  id: "offline-user",
+  email: "offline@dynasties.local",
+  aud: "authenticated",
+  role: "authenticated",
+  created_at: new Date().toISOString(),
+  app_metadata: {},
+  user_metadata: {},
+} as User;
+
 export async function createClient() {
   const cookieStore = await cookies();
 
@@ -9,10 +19,9 @@ export async function createClient() {
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !supabaseKey) {
-    // Return a typed mock client that always reports "not authenticated"
     return {
       auth: {
-        getUser: async () => ({ data: { user: null as User | null }, error: null }),
+        getUser: async () => ({ data: { user: MOCK_USER }, error: null }),
         getSession: async () => ({ data: { session: null as Session | null }, error: null }),
         signOut: async () => ({ error: null }),
       },

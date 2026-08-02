@@ -13,8 +13,10 @@ type SavePayload = {
   state?: unknown;
 };
 
+let _tableEnsured = false;
 async function ensureSaveTable(db: Awaited<ReturnType<typeof ensureDb>>) {
-  if (!db) return;
+  if (!db || _tableEnsured) return;
+  _tableEnsured = true;
   await db.execute(sql`
     create table if not exists dynasty_saves (
       id uuid primary key default gen_random_uuid(),
