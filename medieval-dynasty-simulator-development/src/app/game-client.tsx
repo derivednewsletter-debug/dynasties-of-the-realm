@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSoundDesign } from "@/lib/sound-design";
 import { BattleScreen, type BattleSetup, type BattleOutcome, type UnitType } from "./battle-screen";
 import { AuthModal, useAuth } from "@/components/auth-modal";
 import { SETTLEMENT_SVGS, PORTRAIT_SVGS, CREATION_PORTRAITS } from "@/components/game-svgs";
@@ -29,6 +30,7 @@ interface Caravan { id: string; tid: string; resource: RN; amount: number; days:
 interface Alliance { bid: string; kind: "alliance" | "trade bloc" }
 interface Vassal { bid: string; title: string; loyalty: number; tribute: number }
 interface SuccessionCrisis { id: string; claimants: { name: string; age: number; support: number; traits: string[] }[]; resolved: boolean; year: number }
+interface Betrothal { id: string; bid: string; house: string; kind: "proposed" | "accepted" | "rejected"; year: number; season: Season; fromUs: boolean }
 interface Army { militia: number; archers: number; spearmen: number; knights: number; royalGuard: number; captains: string[]; training: number }
 
 interface PlacedBuilding { id: string; buildId: string; name: string; sid: string; x: number; y: number; level: number }
@@ -59,6 +61,7 @@ interface GS {
   evt: DecEvt | null; toast: { title: string; body: string; portrait: string } | null;
   prices: Record<RN, number>; caravans: Caravan[]; alliances: Alliance[]; army: Army;
   atWar: string[];
+  betrothals: Betrothal[];
   roads: Road[]; factions: Faction[]; citizenMemories: MemoryObj[];
   demotions: number; battlesFought: number; lineagesBorn: number; peakRank: string;
   dynastyExtinct: boolean;
@@ -355,6 +358,7 @@ function initGame(cd?: CharData): GS {
     prices: { food: 2, wood: 3, stone: 4, iron: 8, coal: 6, fish: 3, wool: 4, leather: 6, herbs: 5, tools: 10, weapons: 15, medicine: 18, silver: 1 },
     caravans: [], alliances: [], army: { militia: 8, archers: 3, spearmen: 2, knights: 0, royalGuard: 0, captains: [], training: 12 }, atWar: [],
     roads: [], factions: [], citizenMemories: [], demotions: 0, battlesFought: 0, lineagesBorn: 0, peakRank: "Hamlet", dynastyExtinct: false,
+    betrothals: [],
     vassals: [], successionCrisis: null, civilWarActive: false,
     factionRep: baronies.filter(b => b.id !== home.bid).map(b => ({ bid: b.id, trust: 0, grudge: 0, fear: 0, respect: 0, actions: [], genGrudges: [] })),
     placedBuildings: [
@@ -440,6 +444,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
 
   // Auth
   const auth = useAuth();
+  const sound = useSoundDesign();
   const [cam, setCam] = useState({ x: 0, y: 0, z: 0.35 });
   const [vp, setVp] = useState({ w: 1280, h: 800 });
   const [hover, setHover] = useState<{ x: number; y: number; label: string; sub: string } | null>(null);
@@ -536,6 +541,10 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   }, [auth.user]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const fn = () => { if (!mapRef.current) return; const r = mapRef.current.getBoundingClientRect(); setVp({ w: r.width, h: r.height }); }; fn(); window.addEventListener("resize", fn); return () => window.removeEventListener("resize", fn); }, []);
   useEffect(() => { center(home.x, home.y, 0.55); }, [vp.w, vp.h]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (speed > 0) sound.startAmbience(g.season, speed);
+    else sound.stopAmbience();
+  }, [speed, g.season]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── REAL-TIME CLOCK ── */
   useEffect(() => {
@@ -611,6 +620,17 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
               pop += 1;
             }
             citizens = alive;
+            // ──── CITIZEN SKILL GROWTH ────
+            citizens = citizens.map(c => {
+              if (c.age < 16 || c.age > 60) return c;
+              const sks = { ...c.skills };
+              if (Math.random() < 0.2) sks.gathering = Math.min(8, (sks.gathering ?? 2) + 1);
+              if (c.occ === "smith" && Math.random() < 0.15) sks.craft = Math.min(8, (sks.craft ?? 1) + 1);
+              if (c.occ === "guard" && Math.random() < 0.15) sks.combat = Math.min(8, (sks.combat ?? 1) + 1);
+              if (c.occ === "scribe" && Math.random() < 0.15) sks.faith = Math.min(8, (sks.faith ?? 2) + 1);
+              const mems = Math.random() < 0.08 ? [...c.memories, `In year ${year}, ${c.name} learned more of their trade.`].slice(-6) : c.memories;
+              return { ...c, skills: sks, memories: mems };
+            });
             const lc = family.filter(m => m.status === "Living").length;
             family = family.map(m => {
               if (m.status !== "Living") return m;
@@ -636,7 +656,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
             const rr = family.find(m => m.id === ruler.id);
             if (rr?.status === "Dead") {
               const cand = family.filter(m => m.status === "Living" && m.id !== "mentor").sort((a, b) => b.age - a.age)[0];
-              if (cand) { ruler = { ...cand, role: "Chief of Hearthmere" }; family = family.map(m => m.id === cand.id ? ruler : m); const ph = prev.baronies[0]?.house ?? "House Sheatsley"; extra.unshift(chron(year, season, `${cand.name} Takes the Seat`, `${cand.name} rose to lead ${ph}.`, "glory")); toast = { title: "A New Chief", body: `${cand.name} now leads the House.`, portrait: portrait(cand, 0, charData?.portrait) }; }
+              if (cand) { ruler = { ...cand, role: "Chief of Hearthmere" }; family = family.map(m => m.id === cand.id ? ruler : m); const ph = prev.baronies[0]?.house ?? "House Sheatsley"; extra.unshift(chron(year, season, `${cand.name} Takes the Seat`, `${cand.name} rose to lead ${ph}.`, "glory")); toast = { title: "A New Chief", body: `${cand.name} now leads the House.`, portrait: portrait(cand, 0, charData?.portrait) }; sound.play("death"); }
               // At lower ranks, succession can still cause drama
               const otherHeirs = family.filter(m => m.status === "Living" && m.id !== "mentor" && m.id !== cand?.id && m.age >= 14).length;
               if (otherHeirs > 0 && Math.random() < 0.3) {
@@ -690,6 +710,37 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
         let baronies = prev.baronies;
         if (Math.random() < 0.05 * step) {
           baronies = prev.baronies.map((b, i) => { const p = ((i * 5 + b.eco + b.mil) % 9) - 4; return { ...b, eco: cl01(b.eco + p * 0.4), mil: cl01(b.mil + (p > 0 ? 1 : -0.5)), rel: cl(b.rel + (p > 2 ? -1 : 0.4), -100, 100) }; });
+        }
+        // ──── AI COUNTER-ATTACKS ────
+        for (let bi = 0; bi < baronies.length; bi++) {
+          const b = baronies[bi];
+          if (b.id === prev.baronies[0]?.id) continue;
+          const fr = getBaronyRep(prev.factionRep ?? [], b.id);
+          if (!fr) continue;
+          const trustScore = fr.trust - fr.grudge * 0.5 - fr.fear * 0.2;
+          const isAllied = prev.alliances.some(a => a.bid === b.id);
+          // AI raids if trust is extremely low
+          if (trustScore < -45 && Math.random() < 0.18 && !isAllied) {
+            const looted = Math.min(res.silver, 12 + Math.floor(Math.random() * 18));
+            res = chRes(res, { silver: -looted, food: -8 });
+            extra.push(chron(year, season, `${b.house} Raids!`, `${b.house} riders struck Hearthmere, taking ${looted} silver.`, "warning"));
+            baronies[bi] = { ...b, rel: cl(b.rel - 10, -100, 100) };
+          }
+          // AI forms coalitions against the player
+          else if (trustScore < -30 && Math.random() < 0.06 && prev.rank !== "Hamlet") {
+            const allyBid = prev.baronies.find(b2 => b2.id !== b.id && b2.id !== prev.baronies[0]?.id && (getBaronyRep(prev.factionRep ?? [], b2.id)?.trust ?? 0) < -15)?.id;
+            if (allyBid) {
+              baronies[bi] = { ...b, mil: cl01(b.mil + 8), rel: cl(b.rel - 15, -100, 100) };
+              const allyIdx = baronies.findIndex(b2 => b2.id === allyBid);
+              if (allyIdx >= 0) baronies[allyIdx] = { ...baronies[allyIdx], rel: cl(baronies[allyIdx].rel - 10, -100, 100) };
+              extra.push(chron(year, season, "Coalition Against Us", `${b.house} has rallied allies.`, "warning"));
+            }
+          }
+          // AI refuses trade when hostile
+          else if (trustScore < -20 && Math.random() < 0.04) {
+            extra.push(chron(year, season, "Trade Route Closed", `${b.house} barred merchants from Hearthmere.`, "warning"));
+            baronies[bi] = { ...b, eco: cl01(b.eco - 2), rel: cl(b.rel - 5, -100, 100) };
+          }
         }
 
         // random decision event — filter by current rank to avoid anachronisms
@@ -953,7 +1004,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   }, [g.dynastyExtinct]);
 
   /* ── actions ── */
-  const resolveEvt = (o: EvtOpt) => { setConfirmReset(false); setG(p => { if (!p.evt) return p; const rep = { ...p.rep }; for (const [k, v] of Object.entries(o.rep ?? {}) as [keyof Rep, number][]) rep[k] = cl01(rep[k] + v); return { ...p, res: chRes(p.res, o.res ?? {}), rep, prestige: p.prestige + (o.pres ?? 0), evt: null, chronicle: [chron(p.year, p.season, p.evt.title, o.result, "warning"), ...p.chronicle] }; }); };
+  const resolveEvt = (o: EvtOpt) => { setConfirmReset(false); setG(p => { if (!p.evt) return p; const rep = { ...p.rep }; for (const [k, v] of Object.entries(o.rep ?? {}) as [keyof Rep, number][]) rep[k] = cl01(rep[k] + v); sound.play(p.evt.crisis ? "crisis" : "event"); return { ...p, res: chRes(p.res, o.res ?? {}), rep, prestige: p.prestige + (o.pres ?? 0), evt: null, chronicle: [chron(p.year, p.season, p.evt.title, o.result, "warning"), ...p.chronicle] }; }); };
 
 /* module-level build constants */
 const BUILD_ICONS: Record<string, string> = { homes: "🏠", lumber: "🪓", farm: "🌾", mill: "⚙", mine: "⛏", smith: "🔨", market: "🏪", shrine: "🪦", watch: "🗼" };
@@ -964,6 +1015,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     const sc = Object.fromEntries(Object.entries(t.cost).map(([k, v]) => [k, Math.ceil((v ?? 0) * (ex ? ex.level + 1 : 1))])) as Partial<Res>;
     if (!afford(p.res, sc)) { setNotice(`Need ${fmtD(sc)}`); return p; }
     setNotice(`${t.name} ${ex ? "upgraded" : "built"}.`);
+    sound.play("build");
     return { ...p, buildings: ex ? p.buildings.map(b => b.id === t.id ? { ...b, level: b.level + 1 } : b) : [...p.buildings, { ...t, level: 1 }], res: chRes(p.res, Object.fromEntries(Object.entries(sc).map(([k, v]) => [k, -(v ?? 0)])) as Partial<Res>), prestige: p.prestige + (ex ? 2 : 3), rep: { ...p.rep, prosperity: cl01(p.rep.prosperity + 3) }, chronicle: [chron(p.year, p.season, `${t.name} ${ex ? "Improved" : "Founded"}`, t.desc, "glory"), ...p.chronicle] };
   }); };
 
@@ -1005,8 +1057,38 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     setConfirmReset(false);
     const ch: Record<typeof pol, Partial<Rep>> = { mercy: { trust: 6, fear: -2 }, trade: { prosperity: 6 }, tradition: { tradition: 7, trust: 2 }, envoys: { respect: 4, prosperity: 2 } };
     const titles: Record<typeof pol, string> = { mercy: "Merciful Judgment", trade: "Merchants Welcomed", tradition: "Ancestor Law Renewed", envoys: "Envoys Dispatched" };
-    setG(p => { const rep = { ...p.rep }; for (const [k, v] of Object.entries(ch[pol]) as [keyof Rep, number][]) rep[k] = cl01(rep[k] + v); const baronies = pol === "envoys" ? p.baronies.map((b, i) => i < 10 ? { ...b, rel: cl(b.rel + 5, -100, 100) } : b) : p.baronies; setNotice(titles[pol]); return { ...p, rep, baronies, prestige: p.prestige + 1, chronicle: [chron(p.year, p.season, titles[pol], `The council chose ${titles[pol].toLowerCase()}.`, "faith"), ...p.chronicle] }; });
+    setG(p => { const rep = { ...p.rep }; for (const [k, v] of Object.entries(ch[pol]) as [keyof Rep, number][]) rep[k] = cl01(rep[k] + v); const baronies = pol === "envoys" ? p.baronies.map((b, i) => i < 10 ? { ...b, rel: cl(b.rel + 5, -100, 100) } : b) : p.baronies; setNotice(titles[pol]); sound.play("click"); return { ...p, rep, baronies, prestige: p.prestige + 1, chronicle: [chron(p.year, p.season, titles[pol], `The council chose ${titles[pol].toLowerCase()}.`, "faith"), ...p.chronicle] }; });
   };
+
+  const proposeBetrothal = (bid: string) => { setConfirmReset(false); setG(p => {
+    if (bid === p.baronies[0]?.id) { setNotice("You cannot marry your own house."); return p; }
+    const t = p.baronies.find(b => b.id === bid); if (!t) return p;
+    if (p.betrothals.some(b => b.bid === bid)) { setNotice(`A pact already exists with ${t.house}.`); return p; }
+    if (p.res.silver < 30) { setNotice("A proper betrothal requires 30 silver for the bride-price."); return p; }
+    if (t.rel < 15) { setNotice(`${t.house} needs 15+ relations to consider a marriage.`); return p; }
+    if (p.atWar.includes(bid)) { setNotice(`Cannot marry while at war with ${t.house}.`); return p; }
+    const playerHouse = p.baronies[0]?.house ?? "House Sheatsley";
+    const id = uid("bet");
+    setNotice(`Marriage proposal sent to ${t.house}.`);
+    sound.play("marriage");
+    const isAccepted = (t.rel >= 40 || (t.rel >= 15 && Math.random() < 0.55)) && !p.atWar.includes(bid);
+    const kind: Betrothal["kind"] = isAccepted ? "accepted" : "rejected";
+    const chronText = isAccepted
+      ? `${t.house} accepted the betrothal. Kinship binds ${playerHouse} and ${t.house}.`
+      : `${t.house} declined the proposal, citing current politics.`;
+    const newRep: Rep = isAccepted ? { ...p.rep, trust: cl01(p.rep.trust + 5), respect: cl01(p.rep.respect + 4), prosperity: cl01(p.rep.prosperity + 3) } : p.rep;
+    const newBaronies = isAccepted ? p.baronies.map(b => b.id === bid ? { ...b, rel: cl(b.rel + 25, -100, 100) } : b) : p.baronies.map(b => b.id === bid ? { ...b, rel: cl(b.rel - 5, -100, 100) } : b);
+    const newAlliances = isAccepted && !p.alliances.some(a => a.bid === bid)
+      ? [...p.alliances, { bid, kind: "alliance" as const }]
+      : p.alliances;
+    return {
+      ...p, rep: newRep, baronies: newBaronies, alliances: newAlliances,
+      res: chRes(p.res, { silver: -30 }), prestige: p.prestige + (isAccepted ? 8 : 0),
+      betrothals: [...p.betrothals, { id, bid, house: t.house, kind, year: p.year, season: p.season, fromUs: true }],
+      factionRep: recordFactionAction(p.factionRep ?? [], bid, "betrothal", isAccepted ? 15 : 2, p.year, p.season, `${playerHouse} proposed marriage with ${t.house}. ${isAccepted ? "Accepted!" : "Declined."}`),
+      chronicle: [chron(p.year, p.season, "Marriage Proposal", chronText, isAccepted ? "hope" : "warning"), ...p.chronicle],
+    };
+  }); };
 
   const sendCaravan = (r: RN) => { setConfirmReset(false); setG(p => {
     const amt = Math.min(12, Math.floor(p.res[r]));
@@ -1037,7 +1119,8 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     setG(p => { if (!afford(p.res, costs[u])) { setNotice("Insufficient supplies."); return p; } setNotice(`Five ${u} joined the levy.`); return { ...p, res: chRes(p.res, Object.fromEntries(Object.entries(costs[u]).map(([k, v]) => [k, -(v ?? 0)])) as Partial<Res>), army: { ...p.army, [u]: p.army[u] + 5, training: cl01(p.army.training + 1) } }; });
   };
   const assignCpt = () => { setConfirmReset(false); setG(p => { const c = p.citizens.find(c2 => !p.army.captains.includes(c2.name)); if (!c) { setNotice("No free citizens to promote as captain."); return p; } setNotice(`${c.name} raised as captain.`); return { ...p, army: { ...p.army, captains: [...p.army.captains, c.name], training: cl01(p.army.training + 5) } }; }); };
-  const raid = () => { setConfirmReset(false); setG(p => { const ph = p.baronies[0]?.house ?? "House Sheatsley"; if (selB.id === p.baronies[0]?.id || p.army.militia < 5) { setNotice("Need a foreign target and at least 5 militia."); return p; } const loot = 8 + Math.round(p.army.training / 8); setNotice(`Raided ${selB.house} for ${loot} silver.`); return { ...p, res: chRes(p.res, { silver: loot, food: 4 }), atWar: p.atWar.includes(selB.id) ? p.atWar : [...p.atWar, selB.id], baronies: p.baronies.map(b => b.id === selB.id ? { ...b, rel: cl(b.rel - 18, -100, 100) } : b), rep: { ...p.rep, fear: cl01(p.rep.fear + 5), trust: cl01(p.rep.trust - 2) }, factionRep: recordFactionAction(p.factionRep ?? [], selB.id, "raid", 12, p.year, p.season, `${ph.split(" ")[1]} riders raided ${selB.house} for silver.`), chronicle: [chron(p.year, p.season, "Caravan Raided", `${ph.split(" ")[1]} riders raided ${selB.house}.`, "warning"), ...p.chronicle] }; }); };
+  const raid = () => { setConfirmReset(false); setG(p => { const ph = p.baronies[0]?.house ?? "House Sheatsley"; if (selB.id === p.baronies[0]?.id || p.army.militia < 5) { setNotice("Need a foreign target and at least 5 militia."); return p; } const loot = 8 + Math.round(p.army.training / 8);    setNotice(`Raided ${selB.house} for ${loot} silver.`); sound.play("raid");
+    return { ...p, res: chRes(p.res, { silver: loot, food: 4 }), atWar: p.atWar.includes(selB.id) ? p.atWar : [...p.atWar, selB.id], baronies: p.baronies.map(b => b.id === selB.id ? { ...b, rel: cl(b.rel - 18, -100, 100) } : b), rep: { ...p.rep, fear: cl01(p.rep.fear + 5), trust: cl01(p.rep.trust - 2) }, factionRep: recordFactionAction(p.factionRep ?? [], selB.id, "raid", 12, p.year, p.season, `${ph.split(" ")[1]} riders raided ${selB.house} for silver.`), chronicle: [chron(p.year, p.season, "Caravan Raided", `${ph.split(" ")[1]} riders raided ${selB.house}.`, "warning"), ...p.chronicle] }; }); };
 
   const startBattle = (kind: "attack" | "siege") => {
     setConfirmReset(false);
@@ -1056,10 +1139,10 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       const army: Army = { ...p.army, militia: o.survivors.militia, archers: o.survivors.archers, spearmen: o.survivors.spearmen, knights: o.survivors.knights, royalGuard: o.survivors.royalGuard };
       if (o.withdrew) { setNotice("Your host withdrew from the field."); return { ...p, army, battlesFought: p.battlesFought + 1, chronicle: [chron(p.year, p.season, "A Withdrawal", `The host retreated from ${selB.name}.`, "grief"), ...p.chronicle] }; }
       if (o.victory) {
-        setNotice(`Victory over ${selB.house}!`);
+        setNotice(`Victory over ${selB.house}!`); sound.play("battle");
         return { ...p, army, prestige: p.prestige + 10, battlesFought: p.battlesFought + 1, res: chRes(p.res, { silver: 40, food: 12 }), rep: { ...p.rep, fear: cl01(p.rep.fear + 8), respect: cl01(p.rep.respect + 6) }, baronies: p.baronies.map(b => b.id === selB.id ? { ...b, mil: cl01(b.mil - 25), rel: cl(b.rel - 20, -100, 100) } : b), factionRep: recordFactionAction(p.factionRep ?? [], selB.id, "war_victory", 15, p.year, p.season, `${selB.house} was defeated in open battle.`), chronicle: [chron(p.year, p.season, "A Battle Won", `${selB.house} was broken in the field. ${o.enemyKilled} enemies fell.`, "glory"), ...p.chronicle] };
       }
-      setNotice("Your army was broken.");
+      setNotice("Your army was broken."); sound.play("death");
       return { ...p, army, prestige: Math.max(0, p.prestige - 6), battlesFought: p.battlesFought + 1, rep: { ...p.rep, respect: cl01(p.rep.respect - 5) }, factionRep: recordFactionAction(p.factionRep ?? [], selB.id, "war_defeat", 8, p.year, p.season, `${selB.house} shattered the host of ${p.baronies[0]?.house ?? "House Sheatsley"}.`), chronicle: [chron(p.year, p.season, "A Battle Lost", `The host was shattered before ${selB.name}.`, "grief"), ...p.chronicle] };
     });
   }, [selB]);
@@ -1222,7 +1305,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       {/* ════ MAP ════ */}
       <div ref={mapRef} className={`absolute inset-0 select-none ${drag.current.on ? "cursor-grabbing" : "cursor-grab"}`} style={{ touchAction: "none" }} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel}>
         <div className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ width: W, height: H, transform: `translate(${-cam.x * cam.z}px,${-cam.y * cam.z}px) scale(${cam.z})` }}>
-          <RealmMapCanvas atWar={g.atWar} baronies={g.baronies} roads={g.roads ?? []} settlements={g.settlements} camX={cam.x} camY={cam.y} zoom={cam.z} exploredHexes={g.exploredHexes} />
+          <RealmMapCanvas atWar={g.atWar} baronies={g.baronies} roads={g.roads ?? []} settlements={g.settlements} camX={cam.x} camY={cam.y} zoom={cam.z} exploredHexes={g.exploredHexes} season={g.season} />
 
           {/* thin barony borders */}
           <svg className="pointer-events-none absolute inset-0" width={W} height={H}>
@@ -1512,7 +1595,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
             {!buildMode && g.placedBuildings.filter(pb => pb.sid === g.selSid).length > 0 && <div className="mt-4 border-t border-white/8 pt-3"><p className="mb-2 text-[11px] uppercase tracking-wider text-[#8d8674]">Placed Buildings ({g.placedBuildings.filter(pb => pb.sid === g.selSid).length})</p><div className="flex flex-wrap gap-2">{g.placedBuildings.filter(pb => pb.sid === g.selSid).map(pb => <div key={pb.id} className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-[11px]"><span>{BUILD_ICONS[pb.buildId] ?? "🏗"}</span><span className="font-medium">{pb.name}</span><span className="text-[10px] text-[#8d8674]">Lv {pb.level}</span><button onClick={() => removeBuilding(pb.id)} className="ml-1 rounded-full bg-red-900/50 px-1.5 py-0.5 text-[9px] text-red-200 hover:bg-red-800/50">✕</button></div>)}</div></div>}
           </div>}
           {panel === "Training" && <div className="grid gap-3 md:grid-cols-3"><AC t="Muster Militia" b="Drill defenders with food, weapons and silver." bt="Train" fn={trainAct} /><AC t="Tactical Doctrine" b={`Doctrine favours ${g.ruler.path}.`} bt="Study" fn={trainAct} /><AC t="Border Watch" b="Post rangers to track rival movements." bt="Post" fn={trainAct} /></div>}
-          {panel === "Council" && <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4"><AC t="Merciful Judgment" b="Raise trust, reduce fear." bt="Judge" fn={() => council("mercy")} /><AC t="Open Trade" b="Invite merchants and foreign coin." bt="Invite" fn={() => council("trade")} /><AC t="Honour Old Faith" b="Strengthen tradition." bt="Gather" fn={() => council("tradition")} /><AC t="Send Envoys" b="Improve relations broadly." bt="Dispatch" fn={() => council("envoys")} /></div>}
+          {panel === "Council" && <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4"><AC t="Merciful Judgment" b="Raise trust, reduce fear." bt="Judge" fn={() => council("mercy")} /><AC t="Open Trade" b="Invite merchants and foreign coin." bt="Invite" fn={() => council("trade")} /><AC t="Honour Old Faith" b="Strengthen tradition." bt="Gather" fn={() => council("tradition")} /><AC t="Send Envoys" b="Improve relations broadly." bt="Dispatch" fn={() => council("envoys")} /><AC t={`Propose Marriage to ${selB.house}`} b="Seal a betrothal alliance. 30 silver, 15+ relations." bt="💍 Propose" fn={() => proposeBetrothal(selB.id)} /><BetrothalPanel g={g} /></div>}
           {panel === "Resources" && <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7">{(Object.entries(g.res) as [RN, number][]).map(([k, v]) => { const liveRate = seasonRateMemo[k] ?? 0; return <div key={k} title={`${liveRate >= 0 ? "+" : ""}${liveRate.toFixed(1)} per season. ${RICONS[k]} ${k} is used for buildings, trade, and survival.`} className="rounded-2xl bg-white/3 p-3"><p className="text-[10px] uppercase tracking-wide text-[#8d8674]">{RICONS[k]} {k}</p><p className="text-xl font-bold tabular-nums">{Math.floor(v)}</p><p className={`text-[10px] tabular-nums ${liveRate >= 0 ? "text-emerald-400" : "text-red-400"}`}>{liveRate >= 0 ? "+" : ""}{liveRate.toFixed(1)}/season</p></div>; })}</div>}
           {panel === "Chronicle" && <div><input value={cSearch} onChange={e => setCSearch(e.target.value)} placeholder="Search the Chronicle…" className="mb-3 w-full rounded-full border border-white/8 bg-white/4 px-4 py-2 text-[12px] outline-none placeholder:text-white/25 focus:border-[#c8a84e]/40" /><div className="mb-2 flex flex-wrap gap-1">{(["all","hope","glory","grief","warning","trade","faith"] as const).map(tone => <button key={tone} onClick={() => setCTone(tone)} className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition ${cTone === tone ? "bg-[#c8a84e] text-[#1a1611]" : "bg-white/6 hover:bg-white/10"}`}>{tone === "all" ? "All" : tone}</button>)}</div><div className="space-y-1.5 text-[12px]">{filtChron.slice(0, 200).map(e => <div key={e.id} className="rounded-xl bg-white/3 px-3 py-2"><span className="mr-2 text-[10px] text-[#8d8674]">Y{e.year} {e.season}</span><strong className="text-[#c8a84e]">{e.title}</strong> <span className="text-[#bbb5a0]">{e.text}</span></div>)}</div></div>}
           {panel === "Realm" && <RealmPanel g={g} search={rSearch} setSearch={setRSearch} pickB={pickB} center={center} />}
@@ -1755,6 +1838,29 @@ function VillPanel({ c, g, center, tab, setTab }: { c: Citizen; g: GS; center: (
         {tab === "Skills" && <div className="space-y-1">{(Object.entries(c.skills) as [string, number][]).map(([k, v]) => <Meter key={k} l={k} v={v * 10} />)}</div>}
         {tab === "Memories" && <ul className="list-disc space-y-1 pl-4 text-[12px] text-[#bbb5a0]">{c.memories.map(m => <li key={m}>{m}</li>)}</ul>}
       </div>
+    </div>
+  );
+}
+
+/* ──── Betrothal Panel ──── */
+function BetrothalPanel({ g }: { g: GS }) {
+  if (!g.betrothals.length) return <p className="text-[11px] text-[#8d8674] italic col-span-full">No marriage pacts yet. Propose to a friendly house above.</p>;
+  return (
+    <div className="col-span-full space-y-1.5">
+      <h4 className="text-[11px] font-semibold uppercase tracking-wider text-[#8d8674]">Marriage Pacts</h4>
+      {g.betrothals.slice(-6).reverse().map(b => (
+        <div key={b.id} className="flex items-center gap-2 rounded-lg bg-white/3 px-3 py-1.5 text-[11px]">
+          <span className={b.kind === "accepted" ? "text-emerald-400" : b.kind === "rejected" ? "text-red-400" : "text-amber-400"}>
+            {b.kind === "accepted" ? "💍" : b.kind === "rejected" ? "✗" : "⌛"}
+          </span>
+          <span className="text-[#bbb5a0]">
+            {b.fromUs ? "→" : "←"} {b.house}
+          </span>
+          <span className="text-[#8d8674] text-[9px]">
+            {b.kind === "accepted" ? "Bound" : b.kind === "rejected" ? "Declined" : "Pending"} · Y{b.year} {b.season}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

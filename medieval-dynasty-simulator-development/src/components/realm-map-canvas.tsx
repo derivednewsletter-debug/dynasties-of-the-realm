@@ -238,6 +238,8 @@ function drawTitleBanner(ctx: CanvasRenderingContext2D) {
   ctx.fillText("THE REALM OF CROWNS", bx, by + 4);
 }
 
+type Season = "Spring" | "Summer" | "Autumn" | "Winter";
+
 interface RealmMapCanvasProps {
   atWar: string[];
   baronies: Barony[];
@@ -250,6 +252,90 @@ interface RealmMapCanvasProps {
   staticMode?: boolean;
   /** Fog of war: hex key -> reveal level (0=hidden, 1=dim, 2=clear) */
   exploredHexes?: Record<string, number>;
+  /** Current season for weather particles */
+  season?: Season;
+}
+
+// ═══ WEATHER PARTICLES ═══
+const weatherParticles = new Float64Array(600); // [x, y, vx, vy, life, maxLife] x 100
+let weatherInited = false;
+function initWeather(W2: number, H2: number) {
+  for (let i = 0; i < 100; i++) {
+    const off = i * 6;
+    weatherParticles[off] = Math.random() * W2;
+    weatherParticles[off + 1] = Math.random() * H2;
+    weatherParticles[off + 2] = (Math.random() - 0.5) * 40;
+    weatherParticles[off + 3] = 20 + Math.random() * 60;
+    weatherParticles[off + 4] = Math.random() * 10;
+    weatherParticles[off + 5] = 6 + Math.random() * 10;
+  }
+  weatherInited = true;
+}
+
+function drawWeatherParticles(ctx: CanvasRenderingContext2D, season: Season, dt: number) {
+  if (!weatherInited) initWeather(W, H);
+  ctx.save();
+  for (let i = 0; i < 100; i++) {
+    const off = i * 6;
+    let x = weatherParticles[off];
+    let y = weatherParticles[off + 1];
+    const vx = weatherParticles[off + 2];
+    const vy = weatherParticles[off + 3];
+    let life = weatherParticles[off + 4];
+    const maxLife = weatherParticles[off + 5];
+
+    // Update
+    life += dt;
+    if (life >= maxLife) {
+      x = Math.random() * W;
+      y = -10;
+      life = 0;
+      weatherParticles[off] = x;
+      weatherParticles[off + 5] = 6 + Math.random() * 14;
+    } else {
+      weatherParticles[off] = x + vx * dt;
+      weatherParticles[off + 1] = y + vy * dt;
+    }
+    weatherParticles[off + 4] = life;
+    if (weatherParticles[off + 1] > H + 50) {
+      weatherParticles[off] = Math.random() * W;
+      weatherParticles[off + 1] = -10;
+      weatherParticles[off + 4] = 0;
+    }
+
+    const alpha = 1 - life / maxLife;
+    const px = weatherParticles[off];
+    const py = weatherParticles[off + 1];
+
+    if (season === "Winter") {
+      // Snow
+      ctx.fillStyle = `rgba(255,255,255,${alpha * 0.5})`;
+      ctx.beginPath();
+      ctx.arc(px, py, 2.5 * alpha + 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (season === "Spring") {
+      // Rain
+      ctx.strokeStyle = `rgba(100,140,180,${alpha * 0.22})`;
+      ctx.lineWidth = 0.6;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px + vx * 0.3, py + 8);
+      ctx.stroke();
+    } else if (season === "Autumn") {
+      // Falling leaves
+      ctx.fillStyle = `rgba(210,140,40,${alpha * 0.35})`;
+      ctx.beginPath();
+      ctx.arc(px, py, 3 * alpha + 1, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // Summer — heat shimmer (tiny glowing motes)
+      ctx.fillStyle = `rgba(255,230,160,${alpha * 0.15})`;
+      ctx.beginPath();
+      ctx.arc(px, py, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
 }
 
 function drawFogOfWar(ctx: CanvasRenderingContext2D, exploredHexes: Record<string, number>, camX: number, camY: number, zoom: number, vw: number, vh: number) {
@@ -283,11 +369,12 @@ function drawFogOfWar(ctx: CanvasRenderingContext2D, exploredHexes: Record<strin
   }
 }
 
-export function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes }: RealmMapCanvasProps) {
+export function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes, season }: RealmMapCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef(0);
-  const stateRef = useRef({ atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes });
-  stateRef.current = { atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes };
+  const stateRef = useRef({ atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes, season });
+  stateRef.current = { atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes, season };
+  const lastFrameRef = useRef(0);
   const settMapRef = useRef(new Map<string, { x: number; y: number }>());
   // Recreate settMap when settlements length or first item changes (avoids stale refs)
   const prevSettLenRef = useRef(settlements.length);
@@ -302,6 +389,10 @@ export function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     const s = stateRef.current;
+
+    const now = performance.now();
+    const dt = lastFrameRef.current ? (now - lastFrameRef.current) * 0.001 : 0.016;
+    lastFrameRef.current = now;
 
     const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
@@ -364,6 +455,8 @@ export function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY
       if (s.exploredHexes && Object.keys(s.exploredHexes).length > 0) {
         drawFogOfWar(ctx, s.exploredHexes, s.camX, s.camY, s.zoom, vw, vh);
       }
+      // Weather particles
+      if (s.season) drawWeatherParticles(ctx, s.season, Math.min(dt, 0.1));
       drawCompass(ctx);
       drawTitleBanner(ctx);
     }
@@ -373,13 +466,14 @@ export function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY
 
   useEffect(() => {
     drawFrame();
-    // Animate only when wars are active (not in staticMode)
-    if (stateRef.current.atWar.length > 0 && !stateRef.current.staticMode) {
+    // Animate when wars are active OR weather is enabled (always in dynamic mode)
+    const shouldAnimate = (stateRef.current.atWar.length > 0 || !!stateRef.current.season) && !stateRef.current.staticMode;
+    if (shouldAnimate) {
       const loop = () => { drawFrame(); rafRef.current = requestAnimationFrame(loop); };
       rafRef.current = requestAnimationFrame(loop);
       return () => cancelAnimationFrame(rafRef.current);
     }
-  }, [drawFrame, atWar.length, baronies, roads, settlements, camX, camY, zoom, staticMode]);
+  }, [drawFrame, atWar.length, baronies, roads, settlements, camX, camY, zoom, staticMode, season]);
 
   return (
     <canvas
