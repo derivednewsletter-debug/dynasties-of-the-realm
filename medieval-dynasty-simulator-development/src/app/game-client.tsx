@@ -364,6 +364,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
 
   const camRef = useRef(cam); camRef.current = cam;
   const gRef = useRef(g); gRef.current = g;
+  const dirtyRef = useRef(false);
 
   const home = useMemo(() => g.settlements.find(s => s.home) ?? g.settlements[0], [g.settlements]);
   const selB = g.baronies.find(b => b.id === g.selBid) ?? g.baronies[0];
@@ -414,9 +415,10 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           const cloud = d.save.payload;
           const local = gRef.current;
           // Prefer whichever save is more advanced (higher day + year*365)
-          const cloudScore = (cloud.year ?? 0) * 365 + (cloud.day ?? 0) + (cloud.prestige ?? 0) * 0.01;
-          const localScore = (local.year ?? 0) * 365 + (local.day ?? 0) + (local.prestige ?? 0) * 0.01;
-          if (cloudScore > localScore) {
+          const cloudYear = cloud.year ?? 0, cloudDay = cloud.day ?? 0, cloudPres = cloud.prestige ?? 0;
+          const localYear = local.year ?? 0, localDay = local.day ?? 0, localPres = local.prestige ?? 0;
+          const cloudWins = cloudYear > localYear || (cloudYear === localYear && cloudDay > localDay) || (cloudYear === localYear && cloudDay === localDay && cloudPres > localPres);
+          if (cloudWins) {
             setG(cloud);
             setNotice("Cloud Chronicle loaded — newer than local save.");
             setSyncStatus("synced");
@@ -432,19 +434,21 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
       } catch { setSyncStatus("error"); }
     })();
   }, [auth.user]); // eslint-disable-line react-hooks/exhaustive-deps
-  // Always save to localStorage
-  useEffect(() => { const t = setTimeout(() => localStorage.setItem("dotr-v8", JSON.stringify(g)), 400); return () => clearTimeout(t); }, [g]);
-  // Auto-save to Supabase cloud every 30 seconds when logged in
+  // Always save to localStorage + mark dirty for cloud save
+  useEffect(() => { dirtyRef.current = true; const t = setTimeout(() => localStorage.setItem("dotr-v8", JSON.stringify(g)), 400); return () => clearTimeout(t); }, [g]);
+  // Auto-save to Supabase cloud every 30 seconds when logged in (only if dirty)
   useEffect(() => {
     if (!auth.user) return;
     const id = setInterval(async () => {
+      if (!dirtyRef.current) return;
+      dirtyRef.current = false;
       const gs = gRef.current;
       setSyncStatus("syncing");
       try {
         const r = await fetch("/api/game", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slot: "autosave", houseName: gs.baronies[0]?.house ?? "House Sheatsley", rulerName: gs.ruler.name, state: gs }) });
         setSyncStatus(r.ok ? "synced" : "error");
         if (r.ok) { setTimeout(() => setSyncStatus("idle"), 5000); onSave?.(); }
-      } catch { setSyncStatus("error"); }
+      } catch { setSyncStatus("error"); setTimeout(() => setSyncStatus("idle"), 5000); }
     }, 30000);
     return () => clearInterval(id);
   }, [auth.user]); // eslint-disable-line react-hooks/exhaustive-deps
