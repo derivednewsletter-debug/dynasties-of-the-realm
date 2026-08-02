@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BattleScreen, type BattleSetup, type BattleOutcome, type UnitType } from "./battle-screen";
 import { AuthModal, useAuth } from "@/components/auth-modal";
-import { REALM_MAP, SETTLEMENT_SVGS, PORTRAIT_SVGS } from "@/components/game-svgs";
+import { SETTLEMENT_SVGS, PORTRAIT_SVGS } from "@/components/game-svgs";
 import { RealmMapCanvas } from "@/components/realm-map-canvas";
 import { type RegionChoice, type BannerChoice, type GenderChoice } from "./main-menu";
 import { type EndingData } from "./ending-screen";
@@ -66,6 +66,7 @@ interface GS {
   civilWarActive: boolean;
   factionRep: FactionReputation[];
   placedBuildings: PlacedBuilding[];
+  exploredHexes: Record<string, number>; // "col,row" -> reveal level (0=hidden, 1=dim, 2=clear)
 }
 
 /* ───────── world constants ───────── */
@@ -156,6 +157,37 @@ const sIcon = (t: SType, h: boolean) => h ? "♜" : t === "city" ? "🏛" : t ==
 const sImg = (t: SType, h: boolean) => h ? SETTLEMENT_SVGS.hamlet : t === "city" ? SETTLEMENT_SVGS.city : t === "town" ? SETTLEMENT_SVGS.town : SETTLEMENT_SVGS.village;
 const sArt = (t: SType, h: boolean) => h ? 760 : t === "city" ? 1150 : t === "town" ? 900 : t === "village" ? 660 : 520;
 const chron = (y: number, s: Season, t: string, tx: string, tone: string): ChronEntry => ({ id: uid("c"), year: y, season: s, title: t, text: tx, tone });
+
+/* ── fog of war helpers ── */
+const HEX_R = 80;
+const hexKey = (cx: number, cy: number): string => {
+  const col = Math.round(cx / (HEX_R * 1.5));
+  const row = Math.round((cy - (col % 2 ? HEX_R * Math.sqrt(3) / 2 : 0)) / (HEX_R * Math.sqrt(3)));
+  return `${col},${row}`;
+};
+function revealHexes(center: { x: number; y: number }, radius: number, level: number, existing: Record<string, number>): Record<string, number> {
+  const hexH = HEX_R * Math.sqrt(3);
+  const colSpacing = HEX_R * 1.5; // = hexW * 0.75 where hexW = 2 * HEX_R
+  const cols = Math.ceil(radius / colSpacing) + 2;
+  const rows = Math.ceil(radius / hexH) + 2;
+  const cc = Math.round(center.x / colSpacing);
+  const cr = Math.round(center.y / hexH);
+  const out = { ...existing };
+  for (let dr = -rows; dr <= rows; dr++) {
+    for (let dc = -cols; dc <= cols; dc++) {
+      const col = cc + dc;
+      const row = cr + dr;
+      // Must match drawHexGrid: cx = col * hexW * 0.75 = col * colSpacing
+      const cx = col * colSpacing;
+      const cy = row * hexH + (col % 2 ? hexH / 2 : 0);
+      if (Math.hypot(cx - center.x, cy - center.y) <= radius) {
+        const k = `${col},${row}`;
+        out[k] = Math.max(out[k] ?? 0, level);
+      }
+    }
+  }
+  return out;
+}
 
 /* ───────── world gen ───────── */function genWorld(cd?: CharData) {
   const regions: Region[] = ["Northern Marches","Heartlands","Western Highlands","Eastern Coast","Southern Wilds"];
@@ -294,6 +326,13 @@ function initGame(cd?: CharData): GS {
       { id: uid("pb"), buildId: "lumber", name: "Logging Camp", sid: home.id, x: home.x + 90, y: home.y - 50, level: 1 },
       { id: uid("pb"), buildId: "shrine", name: "Old Faith Shrine", sid: home.id, x: home.x + 30, y: home.y + 70, level: 1 },
     ],
+    // Fog of war: start with home region explored (clear), surrounding area dim
+    exploredHexes: (() => {
+      let hexes: Record<string, number> = {};
+      hexes = revealHexes(home, 600, 2, hexes); // home area clear
+      hexes = revealHexes(home, 1400, 1, hexes); // wider area dim
+      return hexes;
+    })(),
   };
 }
 
@@ -577,7 +616,23 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
         let evt: DecEvt | null = null;
         if (Math.random() < 0.008 * step) evt = EVENTS[Math.floor(Math.random() * EVENTS.length)];
 
-        const ng: GS = { ...prev, day, year, season, res, rate, pop, popCap, family, ruler, prestige, rep, caravans, baronies, evt, toast, chronicle: extra.length ? [...extra.reverse(), ...prev.chronicle].slice(0, 400) : prev.chronicle };
+        // ──── FOG OF WAR: reveal hexes around settlements each season ────
+        let exploredHexes = prev.exploredHexes;
+        if (prev.season !== season) {
+          exploredHexes = { ...prev.exploredHexes };
+          for (const s of prev.settlements) {
+            const revealRadius = s.home ? 800 : s.type === "city" ? 650 : s.type === "town" ? 550 : s.type === "village" ? 450 : 350;
+            const revealLevel = s.home ? 2 : 1;
+            exploredHexes = revealHexes(s, revealRadius, revealLevel, exploredHexes);
+          }
+          for (const b of prev.baronies) {
+            if (b.id === prev.selBid || prev.alliances.some(a => a.bid === b.id)) {
+              exploredHexes = revealHexes(b, 500, 1, exploredHexes);
+            }
+          }
+        }
+
+        const ng: GS = { ...prev, day, year, season, res, rate, pop, popCap, family, ruler, prestige, rep, caravans, baronies, evt, toast, chronicle: extra.length ? [...extra.reverse(), ...prev.chronicle].slice(0, 400) : prev.chronicle, exploredHexes };
         if (seasonRoads) ng.roads = seasonRoads;
         // ──── DEMOTION CHECK ────
         const rank = promoteRank(ng);
@@ -1056,7 +1111,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       {/* ════ MAP ════ */}
       <div ref={mapRef} className={`absolute inset-0 select-none ${drag.current.on ? "cursor-grabbing" : "cursor-grab"}`} style={{ touchAction: "none" }} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel}>
         <div className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ width: W, height: H, transform: `translate(${-cam.x * cam.z}px,${-cam.y * cam.z}px) scale(${cam.z})` }}>
-          <RealmMapCanvas atWar={g.atWar} baronies={g.baronies} roads={g.roads ?? []} settlements={g.settlements} camX={cam.x} camY={cam.y} zoom={cam.z} />
+          <RealmMapCanvas atWar={g.atWar} baronies={g.baronies} roads={g.roads ?? []} settlements={g.settlements} camX={cam.x} camY={cam.y} zoom={cam.z} exploredHexes={g.exploredHexes} />
 
           {/* thin barony borders */}
           <svg className="pointer-events-none absolute inset-0" width={W} height={H}>
@@ -1294,7 +1349,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       <div data-ui="1" className="absolute bottom-4 right-4 z-30 w-52 rounded-2xl border border-white/8 bg-[#0e0d0b]/88 p-2 shadow-xl backdrop-blur-xl">
         <div className="mb-1 flex justify-between px-0.5 text-[9px] uppercase tracking-wider text-[#8d8674]"><span>The Realm</span><span>{Math.round(cam.z * 100)}%</span></div>
         <div className="relative h-32 w-full cursor-crosshair overflow-hidden rounded-lg" onClick={onMini}>
-          <div className="absolute inset-0 opacity-55"><RealmMapCanvas atWar={g.atWar} baronies={g.baronies} roads={g.roads ?? []} settlements={g.settlements} camX={0} camY={0} zoom={1} staticMode /></div>
+          <div className="absolute inset-0 opacity-55"><RealmMapCanvas atWar={g.atWar} baronies={g.baronies} roads={g.roads ?? []} settlements={g.settlements} camX={0} camY={0} zoom={1} staticMode exploredHexes={g.exploredHexes} /></div>
           {g.baronies.map(b => <span key={b.id} className="absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full" style={{ left: `${b.x / W * 100}%`, top: `${b.y / H * 100}%`, background: g.atWar.includes(b.id) ? "#e05a4a" : g.alliances.some(a => a.bid === b.id) ? "#57c07a" : b.color }} />)}
           <span className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#c8a84e] bg-[#6b1f1f]" style={{ left: `${home.x / W * 100}%`, top: `${home.y / H * 100}%` }} />
           <div className="absolute border-2 border-[#c8a84e]/90 bg-[#c8a84e]/10" style={{ left: `${cam.x / W * 100}%`, top: `${cam.y / H * 100}%`, width: `${Math.min(100, vW / W * 100)}%`, height: `${Math.min(100, vH / H * 100)}%` }} />

@@ -248,13 +248,46 @@ interface RealmMapCanvasProps {
   zoom: number;
   /** If true, renders only the static base layer (no war animation, no hex grid culling) */
   staticMode?: boolean;
+  /** Fog of war: hex key -> reveal level (0=hidden, 1=dim, 2=clear) */
+  exploredHexes?: Record<string, number>;
 }
 
-export function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY, zoom, staticMode }: RealmMapCanvasProps) {
+function drawFogOfWar(ctx: CanvasRenderingContext2D, exploredHexes: Record<string, number>, camX: number, camY: number, zoom: number, vw: number, vh: number) {
+  const hexR = 80;
+  const colSpacing = hexR * 1.5; // staggered column spacing (must match revealHexes + drawHexGrid)
+  const hexH = hexR * Math.sqrt(3);
+  const cols = Math.ceil(vw / (colSpacing * zoom)) + 2;
+  const rows = Math.ceil(vh / (hexH * zoom)) + 2;
+  const startCol = Math.floor(camX / colSpacing) - 1;
+  const startRow = Math.floor(camY / hexH) - 1;
+
+  for (let row = startRow; row < startRow + rows; row++) {
+    for (let col = startCol; col < startCol + cols; col++) {
+      const cx = col * colSpacing;
+      const cy = row * hexH + (col % 2 ? hexH / 2 : 0);
+      if (cx < -hexR || cx > W + hexR || cy < -hexH || cy > H + hexH) continue;
+      const k = `${col},${row}`;
+      const level = exploredHexes[k] ?? 0;
+      if (level >= 2) continue; // fully revealed
+      const alpha = level === 0 ? 0.75 : 0.35; // hidden = dark, dim = semi-transparent
+      ctx.fillStyle = `rgba(20,18,15,${alpha})`;
+      ctx.beginPath();
+      ctx.moveTo(cx + hexR, cy);
+      for (let i = 1; i <= 6; i++) {
+        const a = (Math.PI / 3) * i - Math.PI / 6;
+        ctx.lineTo(cx + hexR * 0.95 * Math.cos(a), cy + hexR * 0.95 * Math.sin(a));
+      }
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+}
+
+export function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes }: RealmMapCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef(0);
-  const stateRef = useRef({ atWar, baronies, roads, settlements, camX, camY, zoom, staticMode });
-  stateRef.current = { atWar, baronies, roads, settlements, camX, camY, zoom, staticMode };
+  const stateRef = useRef({ atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes });
+  stateRef.current = { atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes };
   const settMapRef = useRef(new Map<string, { x: number; y: number }>());
   // Recreate settMap when settlements length or first item changes (avoids stale refs)
   const prevSettLenRef = useRef(settlements.length);
@@ -301,6 +334,11 @@ export function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY
       drawBaronyBorders(ctx, s.baronies, s.atWar);
       drawRoads(ctx, s.roads, settMapRef.current);
       drawWarZones(ctx, s.atWar, s.baronies);
+      // Simplified fog for minimap: uniform dim overlay
+      if (s.exploredHexes && Object.keys(s.exploredHexes).length > 0) {
+        ctx.fillStyle = "rgba(20,18,15,0.25)";
+        ctx.fillRect(0, 0, W, H);
+      }
     } else {
       // Dynamic mode: camera-transformed
       ctx.translate(-s.camX * s.zoom, -s.camY * s.zoom);
@@ -322,6 +360,10 @@ export function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY
       drawBaronyBorders(ctx, s.baronies, s.atWar);
       drawRoads(ctx, s.roads, settMapRef.current);
       drawWarZones(ctx, s.atWar, s.baronies);
+      // Fog of war overlay
+      if (s.exploredHexes && Object.keys(s.exploredHexes).length > 0) {
+        drawFogOfWar(ctx, s.exploredHexes, s.camX, s.camY, s.zoom, vw, vh);
+      }
       drawCompass(ctx);
       drawTitleBanner(ctx);
     }
