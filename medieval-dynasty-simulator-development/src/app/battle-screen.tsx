@@ -11,6 +11,7 @@ export interface BattleSetup {
   player: Record<UnitType, number>;
   enemyMilitary: number;
   captains: string[];
+  morale?: number; // 0-1 extra damage bonus from faith/doctrine (default 0)
 }
 
 export interface BattleOutcome {
@@ -33,6 +34,8 @@ interface Squad {
   routing: boolean;
   flash: number;
 }
+
+interface BloodPuff { id: number; x: number; y: number; born: number; side: "p" | "e"; }
 
 const FW = 1600, FH = 900;
 
@@ -140,6 +143,10 @@ export function BattleScreen({ setup, onEnd }: { setup: BattleSetup; onEnd: (o: 
   const enemyKilled = useRef(0);
   const speedRef = useRef(speed);
   speedRef.current = speed;
+  const bloodIdRef = useRef(0);
+  const [blood, setBlood] = useState<BloodPuff[]>([]);
+  const bloodRef = useRef<BloodPuff[]>([]);
+  bloodRef.current = blood;
 
   const [scale, setScale] = useState(1);
   useEffect(() => {
@@ -170,6 +177,7 @@ export function BattleScreen({ setup, onEnd }: { setup: BattleSetup; onEnd: (o: 
         setElapsed(e => e + dt);
         const arr = squadsRef.current;
         const capBonus = 1 + setup.captains.length * 0.05;
+        const moraleBonus = 1 + (setup.morale ?? 0);
 
         for (const s of arr) {
           if (s.men <= 0) continue;
@@ -236,7 +244,7 @@ export function BattleScreen({ setup, onEnd }: { setup: BattleSetup; onEnd: (o: 
           // combat
           if (inRange) {
             let dmg = st.dps * (0.45 + 0.55 * (s.men / s.maxMen)) * dt;
-            if (s.side === "p") dmg *= capBonus;
+            if (s.side === "p") dmg *= capBonus * moraleBonus;
             if (st.range > 100 && inForest(tgt.x, tgt.y)) dmg *= 0.5;      // cover
             if (onHill(s.x, s.y)) dmg *= 1.15;                              // high ground
             if (s.type === "spearmen" && tgt.type === "knights") dmg *= 1.8; // anti-cavalry
@@ -245,6 +253,13 @@ export function BattleScreen({ setup, onEnd }: { setup: BattleSetup; onEnd: (o: 
             tgt.men = Math.max(0, tgt.men - dmg);
             tgt.flash = 1;
             if (tgt.side === "e") enemyKilled.current += before - tgt.men;
+            // blood hit effect — always cull expired, add new if under cap
+            const survivors = bloodRef.current.filter(b => now - b.born < 600);
+            if (dmg > 0.4 && survivors.length < 60) {
+              survivors.push({ id: bloodIdRef.current++, x: tgt.x + (Math.random() - 0.5) * 18, y: tgt.y + (Math.random() - 0.5) * 18, born: now, side: tgt.side });
+            }
+            bloodRef.current = survivors;
+            setBlood([...survivors]);
             if (tgt.men <= 0) { tgt.target = null; s.target = null; }
           }
         }
@@ -334,6 +349,7 @@ export function BattleScreen({ setup, onEnd }: { setup: BattleSetup; onEnd: (o: 
         <div>
           <p className="text-[10px] uppercase tracking-[0.3em] text-red-300">{setup.kind === "siege" ? "Siege Assault" : "Field Battle"} · {Math.floor(elapsed)}s</p>
           <h2 className="text-xl font-bold text-[#eee4d0]">Your Host vs {setup.enemyHouse}</h2>
+          <p className="text-[10px] text-[#bbb5a0]">Enemies slain: <span className="font-semibold text-red-300">{Math.round(enemyKilled.current)}</span>{setup.morale ? ` · Faith morale +${Math.round((setup.morale ?? 0) * 100)}%` : ""}</p>
         </div>
         <div className="flex flex-1 items-center gap-4 px-6">
           <div className="flex-1">
@@ -398,7 +414,27 @@ export function BattleScreen({ setup, onEnd }: { setup: BattleSetup; onEnd: (o: 
             {box && (
               <rect x={Math.min(box.x1, box.x2)} y={Math.min(box.y1, box.y2)} width={Math.abs(box.x2 - box.x1)} height={Math.abs(box.y2 - box.y1)} fill="#c8a84e22" stroke="#c8a84e" strokeWidth={2} />
             )}
+            {/* terrain labels */}
+            <text x={HILL.x} y={HILL.y - HILL.r - 8} textAnchor="middle" fill="#aab886" fontSize={13} fontStyle="italic" opacity={0.75}>Hill (+15% dmg)</text>
+            <text x={RIVER_Y > 0 ? 60 : 0} y={RIVER_Y - 12} textAnchor="middle" fill="#7aa8c0" fontSize={12} fontStyle="italic" opacity={0.7}>River (slow)</text>
+            {FORESTS.map((f, i) => <text key={i} x={f.x} y={f.y - f.r - 8} textAnchor="middle" fill="#5a8a52" fontSize={12} fontStyle="italic" opacity={0.65}>Forest (cover)</text>)}
           </svg>
+
+          {/* blood / hit effects */}
+          {blood.map(bp => {
+            const age = performance.now() - bp.born;
+            const life = 600;
+            return (
+              <span key={bp.id} className="pointer-events-none absolute rounded-full"
+                style={{
+                  left: bp.x, top: bp.y,
+                  width: 10, height: 10,
+                  background: bp.side === "p" ? "#d15b52" : "#e0e0e0",
+                  opacity: Math.max(0, 1 - age / life),
+                  transform: `translate(-50%,-50%) scale(${1 + age / 150})`,
+                }} />
+            );
+          })}
 
           {/* squads */}
           {squads.map(s => {

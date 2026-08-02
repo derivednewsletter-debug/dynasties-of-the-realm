@@ -370,3 +370,92 @@ export const PORTRAIT_SVGS = {
     <text x="40" y="92" text-anchor="middle" font-family="serif" font-size="7" fill="#b8a060" font-style="italic">Mentor</text>
   </svg>`),
 };
+
+/* ───── SIX PILLARS DEITY EMBLEMS ───── */
+export const DEITY_SVGS: Record<string, string> = {
+  astra: svgUri(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+    <defs><radialGradient id="dgA" cx="50%" cy="42%"><stop offset="0%" stop-color="#7a5a1a"/><stop offset="100%" stop-color="#2a1a05"/></radialGradient></defs>
+    <rect width="96" height="96" fill="url(#dgA)" rx="14"/>
+    <circle cx="48" cy="48" r="36" fill="none" stroke="#c8a84e" stroke-width="2" opacity="0.5"/>
+    <circle cx="48" cy="48" r="30" fill="none" stroke="#c8a84e" stroke-width="0.8" opacity="0.4"/>
+    <g stroke="#e8c860" stroke-width="1.6" fill="none">
+      <path d="M30 68 Q30 40 48 40 Q66 40 66 68" />
+      <path d="M30 52 Q24 40 32 32 Q40 26 46 34" opacity="0.7"/>
+      <path d="M66 52 Q72 40 64 32 Q56 26 50 34" opacity="0.7"/>
+      <path d="M30 56 L66 56" opacity="0.5"/><path d="M30 62 L66 62" opacity="0.5"/>
+      <path d="M44 40 L42 30 M52 40 L54 30" opacity="0.6"/>
+    </g>
+    <circle cx="48" cy="22" r="4" fill="#e8c860"/>
+    <text x="48" y="90" text-anchor="middle" font-family="serif" font-size="10" fill="#e8c860" font-style="italic">Astra</text>
+  </svg>`),
+
+  kaelen: svgUri(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+    <defs><radialGradient id="dgK" cx="50%" cy="42%"><stop offset="0%" stop-color="#3a3a42"/><stop offset="100%" stop-color="#0a0a0f"/></radialGradient></defs>
+    <rect width="96" height="96" fill="url(#dgK)" rx="14"/>
+    <circle cx="48" cy="48" r="36" fill="none" stroke="#9a9aa4" stroke-width="2" opacity="0.5"/>
+    <g fill="none" stroke="#c8c8d0" stroke-width="1.6">
+      <path d="M30 46 L48 30 L66 46" />
+      <rect x="38" y="46" width="20" height="14" />
+      <path d="M44 46 L44 74 M52 46 L52 74" />
+      <path d="M34 74 L62 74" />
+      <path d="M36 60 L60 52" opacity="0.5"/>
+    </g>
+    <path d="M60 20 L72 28 L66 34 L54 26 Z" fill="#c8c8d0" opacity="0.85"/>
+    <text x="48" y="90" text-anchor="middle" font-family="serif" font-size="10" fill="#c8c8d0" font-style="italic">Kaelen</text>
+  </svg>`),
+
+  verna: svgUri(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+    <defs><radialGradient id="dgV" cx="50%" cy="42%"><stop offset="0%" stop-color="#1f4a1f"/><stop offset="100%" stop-color="#071a07"/></radialGradient></defs>
+    <rect width="96" height="96" fill="url(#dgV)" rx="14"/>
+    <circle cx="48" cy="48" r="36" fill="none" stroke="#5a9a52" stroke-width="2" opacity="0.5"/>
+    <g fill="none" stroke="#6db866" stroke-width="1.6">
+      <path d="M48 40 L48 74" />
+      <path d="M34 50 Q28 42 34 34 Q44 26 48 34 Q52 26 62 34 Q68 42 62 50" />
+      <path d="M40 66 Q48 60 56 66" />
+      <path d="M42 50 L46 58 L50 50" opacity="0.6"/>
+      <path d="M36 58 L44 64 L40 70" opacity="0.5"/>
+      <path d="M60 58 L52 64 L56 70" opacity="0.5"/>
+    </g>
+    <circle cx="48" cy="30" r="4" fill="#8ad47a"/>
+    <text x="48" y="90" text-anchor="middle" font-family="serif" font-size="10" fill="#6db866" font-style="italic">Verna</text>
+  </svg>`),
+
+  valen: svgUri(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+    <defs><radialGradient id="dgL" cx="50%" cy="42%"><stop offset="0%" stop-color="#1a4a5a"/><stop offset="100%" stop-color="#051420"/></radialGradient></defs>
+    <rect width="96" height="96" fill="url(#dgL)" rx="14"/>
+    <circle cx="48" cy="48" r="36" fill="none" stroke="#4d97a8" stroke-width="2" opacity="0.5"/>
+    <g fill="none" stroke="#5ab8cc" stroke-width="1.6">
+      <path d="M28 58 Q38 50 48 58 Q58 66 68 58" />
+      <path d="M28 66 Q38 58 48 66 Q58 74 68 66" opacity="0.6"/>
+      <path d="M48 36 L48 20 M42 26 L48 20 L54 26" opacity="0.8"/>
+    </g>
+    <circle cx="48" cy="30" r="4" fill="#5ab8cc"/>
+    <text x="48" y="90" text-anchor="middle" font-family="serif" font-size="10" fill="#5ab8cc" font-style="italic">Valen</text>
+  </svg>`),
+
+  morvath: svgUri(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+    <defs><radialGradient id="dgM" cx="50%" cy="42%"><stop offset="0%" stop-color="#4a4a5a"/><stop offset="100%" stop-color="#101018"/></radialGradient></defs>
+    <rect width="96" height="96" fill="url(#dgM)" rx="14"/>
+    <circle cx="48" cy="48" r="36" fill="none" stroke="#8a8aa4" stroke-width="2" opacity="0.5"/>
+    <g fill="none" stroke="#b8b8d0" stroke-width="1.6">
+      <path d="M30 62 L30 34 L48 40 L66 34 L66 62 Q48 68 30 62 Z" />
+      <path d="M38 62 L38 42 L48 45 L58 42 L58 62" opacity="0.6"/>
+    </g>
+    <path d="M56 20 L68 30 L60 34 L48 24 Z" fill="#b8b8d0" opacity="0.7"/>
+    <text x="48" y="90" text-anchor="middle" font-family="serif" font-size="10" fill="#b8b8d0" font-style="italic">Morvath</text>
+  </svg>`),
+
+  sol: svgUri(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+    <defs><radialGradient id="dgS" cx="50%" cy="42%"><stop offset="0%" stop-color="#7a4a0a"/><stop offset="100%" stop-color="#1f0f02"/></radialGradient></defs>
+    <rect width="96" height="96" fill="url(#dgS)" rx="14"/>
+    <circle cx="48" cy="48" r="36" fill="none" stroke="#e0a040" stroke-width="2" opacity="0.5"/>
+    <circle cx="48" cy="48" r="14" fill="#e0a040" opacity="0.9"/>
+    <g stroke="#e0a040" stroke-width="2" stroke-linecap="round">
+      <line x1="48" y1="20" x2="48" y2="28"/><line x1="48" y1="68" x2="48" y2="76"/>
+      <line x1="20" y1="48" x2="28" y2="48"/><line x1="68" y1="48" x2="76" y2="48"/>
+      <line x1="30" y1="30" x2="36" y2="36"/><line x1="60" y1="60" x2="66" y2="66"/>
+      <line x1="30" y1="66" x2="36" y2="60"/><line x1="60" y1="36" x2="66" y2="30"/>
+    </g>
+    <text x="48" y="90" text-anchor="middle" font-family="serif" font-size="10" fill="#e0a040" font-style="italic">Sol</text>
+  </svg>`),
+};

@@ -3,15 +3,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSoundDesign } from "@/lib/sound-design";
 import { BattleScreen, type BattleSetup, type BattleOutcome, type UnitType } from "./battle-screen";
 import { AuthModal, useAuth } from "@/components/auth-modal";
-import { SETTLEMENT_SVGS, PORTRAIT_SVGS, CREATION_PORTRAITS } from "@/components/game-svgs";
+import { SETTLEMENT_SVGS, PORTRAIT_SVGS, CREATION_PORTRAITS, DEITY_SVGS } from "@/components/game-svgs";
 import { RealmMapCanvas } from "@/components/realm-map-canvas";
 import { type RegionChoice, type BannerChoice, type GenderChoice, type PortraitChoice } from "./main-menu";
 import { type EndingData } from "./ending-screen";
 
 /* ───────── types ───────── */
 type Season = "Spring" | "Summer" | "Autumn" | "Winter";
-type Panel = "House" | "Build" | "Training" | "Council" | "Resources" | "Chronicle" | "Family" | "Citizens" | "Alerts" | "Settlement" | "Barony" | "Villager" | "Trade" | "War" | "Realm" | "Crown" | "Factions" | null;
+type Panel = "House" | "Build" | "Training" | "Council" | "Resources" | "Chronicle" | "Family" | "Citizens" | "Alerts" | "Settlement" | "Barony" | "Villager" | "Trade" | "War" | "Realm" | "Crown" | "Factions" | "Faith" | null;
 type Path = "Forest & Beast" | "Iron" | "Scholar" | "Warrior" | "Sea" | "Land";
+type DeityId = "astra" | "kaelen" | "verna" | "valen" | "morvath" | "sol";
 type Region = "Northern Marches" | "Heartlands" | "Western Highlands" | "Eastern Coast" | "Southern Wilds";
 type SType = "hamlet" | "village" | "town" | "city";
 type RN = "food" | "wood" | "stone" | "iron" | "coal" | "fish" | "wool" | "leather" | "herbs" | "tools" | "weapons" | "medicine" | "silver";
@@ -78,6 +79,29 @@ const W = 15000, H = 10000;
 const DAYS_PER_SEASON = 90;
 const SEASONS: Season[] = ["Spring", "Summer", "Autumn", "Winter"];
 const PATHS: Path[] = ["Forest & Beast", "Iron", "Scholar", "Warrior", "Sea", "Land"];
+const MIN_POPULATION = 24;
+const POP_CAP_FLOOR = 60;
+const RANK_ORDER = ["Hamlet","Village","Town","City","Petty Barony","Small Barony","Great Barony","Regional Lord","King of the Realm"];
+
+/* ───── Six Pillars pantheon ───── */
+const DEITY_IDS: DeityId[] = ["astra", "kaelen", "verna", "valen", "morvath", "sol"];
+const FAITH_MAX = 100;
+const FAITH_DECAY = 2;          // per season when neglected
+const TEMPLE_FAITH = 6;         // faith gained per temple per season
+const WORSHIP_FAITH = 8;        // faith gained per worship action
+const DOMINION_THRESHOLD = 28;  // faith needed to dominate a domain
+
+const DEITY_INFO: Record<DeityId, { name: string; title: string; path: Path; domain: string; color: string; icon: string; benefit: string; bonus: Partial<Res> }> = {
+  astra:   { name: "Astra",    title: "The Hearth-Mother",   path: "Land",            domain: "Agriculture, hearth & home",   color: "#e8c860", icon: "🌾", benefit: "Food production and population growth.",  bonus: { food: 1.15 } },
+  kaelen:  { name: "Kaelen",   title: "The Iron Father",     path: "Iron",            domain: "Mining, craft & forge",        color: "#c8c8d0", icon: "⛏",  benefit: "Iron, tools and weapons output.",       bonus: { iron: 1.2, tools: 1.2, weapons: 1.2 } },
+  verna:   { name: "Verna",    title: "The Green Lady",      path: "Forest & Beast",  domain: "Forest, hunt & herb",          color: "#6db866", icon: "🌿", benefit: "Wood, leather and herbs output.",        bonus: { wood: 1.2, leather: 1.2, herbs: 1.2 } },
+  valen:   { name: "Valen",    title: "The Golden Scales",   path: "Sea",             domain: "Trade, sea & coin",            color: "#5ab8cc", icon: "🐟", benefit: "Silver income and fish yields.",        bonus: { fish: 1.25, silver: 1.15 } },
+  morvath: { name: "Morvath",  title: "The Gray Pilgrim",    path: "Scholar",         domain: "Knowledge & law",              color: "#b8b8d0", icon: "📜", benefit: "Tradition and respect.",                bonus: { medicine: 1.2 } },
+  sol:     { name: "Sol Invictus", title: "The High Arbiter", path: "Warrior",        domain: "War, order & justice",         color: "#e0a040", icon: "⚔",  benefit: "Military strength and morale.",        bonus: {} },
+};
+
+const PATH_DEITY: Record<Path, DeityId> = { "Forest & Beast": "verna", "Iron": "kaelen", "Scholar": "morvath", "Warrior": "sol", "Sea": "valen", "Land": "astra" };
+const TEMPLE_OF: Record<string, DeityId> = { temple_astra: "astra", temple_kaelen: "kaelen", temple_verna: "verna", temple_valen: "valen", temple_morvath: "morvath", temple_sol: "sol" };
 
 const RC: Record<Region, { x: number; y: number }> = {
   "Northern Marches": { x: 7500, y: 1500 },
@@ -121,6 +145,13 @@ const BUILDS: Building[] = [
   { id: "market", name: "Market Square", level: 1, desc: "Merchants bring trade and ideas.", prod: { silver: 12, fish: 2 }, cost: { wood: 20, stone: 5, tools: 3, silver: 24 } },
   { id: "shrine", name: "Old Faith Shrine", level: 1, desc: "Ancestral stones soften despair.", prod: { herbs: 2, medicine: 1 }, cost: { stone: 10, wood: 8, silver: 10 } },
   { id: "watch", name: "Ranger Outpost", level: 1, desc: "Drilled watch discourages bandits.", prod: { weapons: -1, silver: -2 }, cost: { wood: 24, stone: 12, weapons: 3, silver: 32 } },
+  // ── Six Pillars temples ──
+  { id: "temple_astra", name: "Astra's Hearth Temple", level: 1, desc: "Hymns of the hearth mother keep granaries full and homes warm.", prod: { food: 12, medicine: 1 }, cost: { wood: 30, stone: 24, silver: 30 } },
+  { id: "temple_kaelen", name: "Kaelen's Forge Temple", level: 1, desc: "Priests bless the bellows and the ore-chant speeds the smiths.", prod: { iron: 4, tools: 3, weapons: 1 }, cost: { wood: 26, stone: 30, iron: 8, silver: 34 } },
+  { id: "temple_verna", name: "Verna's Grove Temple", level: 1, desc: "Sacred groves shelter the foresters and healers of the realm.", prod: { wood: 8, herbs: 6, leather: 2 }, cost: { wood: 40, stone: 16, silver: 24 } },
+  { id: "temple_valen", name: "Valen's Tidal Temple", level: 1, desc: "The golden scales bless the docks and the merchants' ledgers.", prod: { fish: 6, silver: 8 }, cost: { wood: 24, stone: 20, silver: 40 } },
+  { id: "temple_morvath", name: "Morvath's Scriptorium", level: 1, desc: "Scribes copy sacred law beneath the gray pilgrim's watchful eye.", prod: { medicine: 3, silver: 4 }, cost: { stone: 28, wood: 20, silver: 30 } },
+  { id: "temple_sol", name: "Sol's War Temple", level: 1, desc: "The High Arbiter's banners bless the host and the knightly halls.", prod: { weapons: 3, food: -2 }, cost: { stone: 32, wood: 22, weapons: 4, silver: 36 } },
 ];
 
 const EVENTS: DecEvt[] = [
@@ -179,6 +210,19 @@ const EVENTS: DecEvt[] = [
   { id: "crown_war", title: "War on the Horizon", text: "A coalition of border baronies is massing troops. The Crown must decide.", crisis: true, opts: [
     { label: "Muster the royal host", hint: "+prestige", result: "War drums beat from the capital.", res: { weapons: -6, food: -20, silver: -40 }, rep: { fear: 10, respect: 8 } },
     { label: "Seek a diplomatic solution", hint: "+trust", result: "Envoys rode through the night.", res: { silver: -35 }, rep: { trust: 5, respect: 3 } } ] },
+  // ── Six Pillars religious events ──
+  { id: "divine_omen", title: "A Sign in the Heavens", text: "A comet trails across the sky. The priests read it as an omen from the Pillars.", crisis: false, opts: [
+    { label: "Hold a vigil at the temples", hint: "+faith", result: "The whole realm prayed beneath the comet.", res: { food: -10, silver: -10 }, rep: { tradition: 6, trust: 3 } },
+    { label: "Dismiss it as superstition", hint: "+prosperity", result: "The learned shrugged and the markets stayed open.", rep: { prosperity: 4, tradition: -3 } } ] },
+  { id: "pious_pilgrimage", title: "The Pilgrims Arrive", text: "A column of pilgrims marches through Hearthmere seeking the blessing of the Pillars.", crisis: false, opts: [
+    { label: "Feed and shelter them", hint: "+faith", result: "The pilgrims blessed the hearthstones before moving on.", res: { food: -15 }, rep: { tradition: 5, trust: 4 } },
+    { label: "Tax the pilgrims' passage", hint: "+silver", result: "The pilgrims paid the road toll with sour faces.", res: { silver: 15 }, rep: { tradition: -3, fear: 2 } } ] },
+  { id: "temple_call", title: "The Temple Calls", text: "The priestly order of a Pillar seeks royal patronage to raise a grand temple.", crisis: false, opts: [
+    { label: "Endow the temple", hint: "+faith, -silver", result: "The cornerstone was laid with great ceremony.", res: { silver: -30, stone: -10 }, rep: { tradition: 8, respect: 4 } },
+    { label: "Offer modest support", hint: "+tradition", result: "A smaller chapel was dedicated instead.", res: { silver: -12 }, rep: { tradition: 4 } } ] },
+  { id: "heretic", title: "A Heretic Preaches", text: "A wandering preacher denounces the Six Pillars and gathers a following.", crisis: true, opts: [
+    { label: "Silence the heretic", hint: "+order", result: "The preacher was banished and the crowd dispersed.", res: { silver: -8 }, rep: { fear: 6, tradition: 2, trust: -3 } },
+    { label: "Let the people judge", hint: "risky", result: "The preacher's words spread unchecked for a season.", rep: { trust: 3, tradition: -5 } } ] },
 ];
 
 /* ───────── helpers ───────── */
@@ -245,11 +289,15 @@ function validateSaveState(state: unknown): state is any {
     typeof state.day === "number"
   );
 }
+
+function normalizeState(state: any): GS {
+  if (!state.faith) state.faith = { astra: 0, kaelen: 0, verna: 0, valen: 0, morvath: 0, sol: 0 };
+  return state as GS;
+}
   const chRes = (r: Res, d: Partial<Res>): Res => { const n = { ...r }; for (const k of Object.keys(d) as RN[]) n[k] = Math.max(0, n[k] + (d[k] ?? 0)); return n; };
   const afford = (r: Res, c: Partial<Res>) => (Object.keys(c) as RN[]).every(k => r[k] >= (c[k] ?? 0));
   const fmtD = (d: Partial<Res>) => { const e = (Object.entries(d) as [RN, number][]).filter(([, v]) => v !== 0); return e.length ? e.map(([k, v]) => `${v > 0 ? "+" : ""}${Math.round(v)} ${k}`).join(", ") : "—"; };
 
-  const MIN_POPULATION = 24; // Minimum population after losses
 const portrait = (m: Family, i: number, rulerPortrait?: PortraitChoice) => {
   if (m.id === "mentor") return PORTRAITS.mentor;
   if (m.role.includes("Chief")) return rulerPortrait ? (CREATION_PORTRAITS[rulerPortrait] ?? PORTRAITS.ruler) : PORTRAITS.ruler;
@@ -435,8 +483,12 @@ function initGame(cd?: CharData): GS {
       hexes = revealHexes(home, 1400, 1, hexes); // wider area dim
       return hexes;
     })(),
-    // Deity faith levels — all start neutral
-    faith: { astra: 0, kaelen: 0, verna: 0, valen: 0, morvath: 0, sol: 0 },
+    // Deity faith levels — the ruler's patron path begins with a slight devotion
+    faith: (() => {
+      const f: Record<string, number> = { astra: 0, kaelen: 0, verna: 0, valen: 0, morvath: 0, sol: 0 };
+      f[PATH_DEITY[rulerPath as Path]] = 6;
+      return f;
+    })(),
   };
 }
 
@@ -446,11 +498,70 @@ function seasonRate(g: GS): Partial<Res> {
     const m = k === "food" && g.season === "Autumn" ? 1.6 : k === "food" && g.season === "Winter" ? 0.45 : 1;
     d[k] = (d[k] ?? 0) + v * b.level * m;
   }
+  // Faith dominion bonus: the dominant deity blesses her domain
+  const mods = faithProdMods(g.faith ?? {});
+  for (const [k, m] of Object.entries(mods) as [RN, number][]) {
+    if (d[k] != null && d[k] > 0) d[k] = (d[k] ?? 0) * m;
+  }
   if (g.season === "Winter") { d.wood = (d.wood ?? 0) - 8; d.medicine = (d.medicine ?? 0) - 1; }
   if (g.season === "Summer") { d.stone = (d.stone ?? 0) + 3; d.iron = (d.iron ?? 0) + 2; }
   return d;
 }
 const promoteRank = (g: GS) => { const s = g.pop + g.prestige * 2 + g.rep.prosperity; return s > 2000 ? "King of the Realm" : s > 1500 ? "Regional Lord" : s > 1100 ? "Great Barony" : s > 780 ? "Small Barony" : s > 580 ? "Petty Barony" : s > 430 ? "City" : s > 300 ? "Town" : s > 210 ? "Village" : "Hamlet"; };
+
+/* ───── faith / pantheon helpers ───── */
+function getDominantDeity(faith: Record<string, number>): DeityId | null {
+  let best: DeityId | null = null;
+  let bestV = 0;
+  for (const d of DEITY_IDS) {
+    const v = faith[d] ?? 0;
+    if (v > bestV && v > 0) { best = d; bestV = v; }
+  }
+  return bestV >= DOMINION_THRESHOLD ? best : null;
+}
+function faithSpread(faith: Record<string, number>): number {
+  const vals = DEITY_IDS.map(d => faith[d] ?? 0);
+  const total = vals.reduce((a, b) => a + b, 0) || 1;
+  let sq = 0;
+  for (const v of vals) sq += (v / total) * (v / total);
+  return sq; // 1.0 = total devotion to one pillar, 0.17 = perfectly even
+}
+function faithTick(faith: Record<string, number>, buildings: Building[], year: number, season: Season): { faith: Record<string, number>; entries: ChronEntry[] } {
+  const nf = { ...faith };
+  const entries: ChronEntry[] = [];
+  for (const d of DEITY_IDS) {
+    const v = nf[d] ?? 0;
+    if (v <= 0) continue;
+    // decay toward zero when no temple keeps the flame
+    let nv = v - FAITH_DECAY;
+    // temples sustain + grow
+    for (const b of buildings) if (TEMPLE_OF[b.id] === d) nv += TEMPLE_FAITH * b.level;
+    nf[d] = clamp(nv, 0, FAITH_MAX);
+  }
+  return { faith: nf, entries };
+}
+function faithProdMods(faith: Record<string, number>): Partial<Res> {
+  const dom = getDominantDeity(faith);
+  if (!dom) return {};
+  return { ...(DEITY_INFO[dom].bonus ?? {}) };
+}
+function faithTraditionMod(faith: Record<string, number>): number {
+  return clamp01(faithSpread(faith) * 10); // balanced worship lifts tradition
+}
+function faithWorshipCosts(d: DeityId): Partial<Res> {
+  return d === "sol" ? { food: 14, weapons: 2, silver: 18 } : d === "morvath" ? { food: 10, silver: 20 } : d === "valen" ? { food: 8, silver: 26 } : { food: 12, silver: 12 };
+}
+function faithWorshipResult(d: DeityId): { res: Partial<Res>; rep: Partial<Rep> } {
+  const r: Record<DeityId, { res: Partial<Res>; rep: Partial<Rep> }> = {
+    astra:   { res: { food: 8 }, rep: { trust: 3, tradition: 2 } },
+    kaelen:  { res: { tools: 2 }, rep: { prosperity: 4, tradition: 2 } },
+    verna:   { res: { herbs: 4, wood: 4 }, rep: { tradition: 4 } },
+    valen:   { res: { silver: 6 }, rep: { prosperity: 4 } },
+    morvath: { res: { medicine: 2 }, rep: { respect: 4, tradition: 2 } },
+    sol:     { res: { weapons: 2 }, rep: { fear: 2, respect: 3, trust: 1 } },
+  };
+  return r[d];
+}
 /* ───── faction reputation helpers ───── */
 function recordFactionAction(rep: FactionReputation[], bid: string, action: ActionType, magnitude: number, year: number, season: Season, text: string): FactionReputation[] {
   return rep.map(fr => {
@@ -553,7 +664,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
              const decrypted = await decrypt(encrypted);
              const p = JSON.parse(decrypted) as GS;
              if (validateSaveState(p)) {
-               setG(p);
+               setG(normalizeState(p));
                setNotice("Chronicle restored.");
              } else {
                localStorage.removeItem("dotr-v8");
@@ -586,7 +697,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           const localYear = local.year ?? 0, localDay = local.day ?? 0, localPres = local.prestige ?? 0;
           const cloudWins = cloudYear > localYear || (cloudYear === localYear && cloudDay > localDay) || (cloudYear === localYear && cloudDay === localDay && cloudPres > localPres);
           if (cloudWins) {
-            setG(cloud);
+            setG(normalizeState(cloud));
             setNotice("Cloud Chronicle loaded — newer than local save.");
             setSyncStatus("synced");
             onSave?.();
@@ -659,17 +770,27 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
 
         // season / year boundary
         let citizens = prev.citizens;
+        let faith = prev.faith ?? { astra: 0, kaelen: 0, verna: 0, valen: 0, morvath: 0, sol: 0 };
 
         if (day > DAYS_PER_SEASON) {
           day -= DAYS_PER_SEASON;
           const ni = (SEASONS.indexOf(season) + 1) % 4;
           season = SEASONS[ni];
+          // ──── FAITH TICK (each season) ────
+          const prevDominant = getDominantDeity(faith);
+          const ft = faithTick(faith, prev.buildings, year, season);
+          faith = ft.faith;
+          const newDominant = getDominantDeity(faith);
+          if (prevDominant !== newDominant && newDominant) {
+            extra.push(chron(year, season, `${DEITY_INFO[newDominant].name} Dominates`, `The ${DEITY_INFO[newDominant].title.toLowerCase()} now holds sway over the realm — ${DEITY_INFO[newDominant].domain.toLowerCase()}.`, "faith"));
+            toast = { title: `${DEITY_INFO[newDominant].name} Smiles`, body: `${DEITY_INFO[newDominant].title} grants ${DEITY_INFO[newDominant].benefit}`, portrait: DEITY_SVGS[newDominant] };
+          }
           if (ni === 0) {
             year += 1;
             const hunger = res.food < pop / 3;
             // Natural births — food surplus creates new citizens (pop adjusts per-citizen below)
             const surplusFactor = Math.max(0, Math.floor((res.food - pop / 2) / 15));
-            pop = Math.max(24, Math.min(popCap, pop + Math.max(-4, Math.min(6, Math.round(rep.prosperity / 18) - (hunger ? 6 : 0)))));
+            pop = Math.max(MIN_POPULATION, Math.min(popCap, pop + Math.max(-4, Math.min(6, Math.round(rep.prosperity / 18) - (hunger ? 6 : 0)))));
             // Age all citizens
             const aged = citizens.map(c => ({
               ...c, age: c.age + 1,
@@ -681,7 +802,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
             for (const c of aged) {
               if (c.age > 65 && Math.random() < Math.min(0.25, (c.age - 65) * 0.015)) {
                 extra.push(chron(year, season, `${c.name} Passes`, `${c.name}, a ${c.occ} of Hearthmere, died at age ${c.age}.`, "grief"));
-                pop = Math.max(24, pop - 1);
+                pop = Math.max(MIN_POPULATION, pop - 1);
               } else if (c.age > 55 && Math.random() < 0.06) {
                 alive.push({ ...c, occ: ["elder", "sage", "retired"][Math.floor(Math.random() * 3)], traits: [...c.traits, "wise"] });
               } else {
@@ -706,6 +827,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
             }
             citizens = alive;
             // ──── CITIZEN SKILL GROWTH ────
+            const faithBoost = faith[getDominantDeity(faith) ?? "astra"] ?? 0;
             citizens = citizens.map(c => {
               if (c.age < 16 || c.age > 60) return c;
               const sks = { ...c.skills };
@@ -713,6 +835,9 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
               if (c.occ === "smith" && Math.random() < 0.15) sks.craft = Math.min(8, (sks.craft ?? 1) + 1);
               if (c.occ === "guard" && Math.random() < 0.15) sks.combat = Math.min(8, (sks.combat ?? 1) + 1);
               if (c.occ === "scribe" && Math.random() < 0.15) sks.faith = Math.min(8, (sks.faith ?? 2) + 1);
+              // High faith in the realm deepens every citizen's faith — devotion spreads
+              if (faithBoost > 20 && Math.random() < 0.15) sks.faith = Math.min(8, (sks.faith ?? 2) + 1);
+              if (faithBoost > 50 && Math.random() < 0.06) { sks.gathering = Math.min(8, (sks.gathering ?? 2) + 1); sks.craft = Math.min(8, (sks.craft ?? 1) + 1); }
               const mems = Math.random() < 0.08 ? [...c.memories, `In year ${year}, ${c.name} learned more of their trade.`].slice(-6) : c.memories;
               return { ...c, skills: sks, memories: mems };
             });
@@ -788,7 +913,9 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           const tributeSilver = prev.vassals.filter(v => v.loyalty > 25).reduce((s, v) => s + v.tribute, 0);
           if (tributeSilver > 0) res = chRes(res, { silver: tributeSilver });
           const hungry = res.food < pop / 3;
-          rep = { ...rep, trust: clamp01(rep.trust + (hungry ? -4 : 1)), prosperity: clamp01(rep.prosperity + (res.silver > 60 ? 2 : 0) + (hungry ? -5 : 1)), tradition: clamp01(rep.tradition + (prev.buildings.some(b => b.id === "shrine") ? 1 : 0)) };
+          const faithTrad = faithTraditionMod(faith);
+          const hasShrine = prev.buildings.some(b => b.id === "shrine") || prev.buildings.some(b => TEMPLE_OF[b.id]);
+          rep = { ...rep, trust: clamp01(rep.trust + (hungry ? -4 : 1)), prosperity: clamp01(rep.prosperity + (res.silver > 60 ? 2 : 0) + (hungry ? -5 : 1)), tradition: clamp01(rep.tradition + (hasShrine ? 1 : 0) + faithTrad) };
         }
 
         // drifting AI world
@@ -874,23 +1001,22 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           }
         }
 
-        const ng: GS = { ...prev, day, year, season, res, rate, pop, popCap, family, ruler, citizens, prestige, rep, caravans, baronies, evt, toast, chronicle: extra.length ? [...extra.reverse(), ...prev.chronicle].slice(0, 400) : prev.chronicle, exploredHexes };
+        const ng: GS = { ...prev, day, year, season, res, rate, pop, popCap, family, ruler, citizens, prestige, rep, caravans, baronies, evt, toast, chronicle: extra.length ? [...extra.reverse(), ...prev.chronicle].slice(0, 400) : prev.chronicle, exploredHexes, faith };
         if (seasonRoads) ng.roads = seasonRoads;
         // ──── DEMOTION CHECK ────
         const rank = promoteRank(ng);
-        const RANK_ORDER = ["Hamlet","Village","Town","City","Petty Barony","Small Barony","Great Barony","Regional Lord","King of the Realm"];
         const prevRankIdx = RANK_ORDER.indexOf(prev.rank);
-        const newRankIdx = (["Hamlet","Village","Town","City","Petty Barony","Small Barony","Great Barony","Regional Lord","King of the Realm"]).indexOf(rank);
+        const newRankIdx = RANK_ORDER.indexOf(rank);
         let demotions = prev.demotions;
         let dynastyExtinct = prev.dynastyExtinct;
         let civilWarActive = prev.civilWarActive;
         if (newRankIdx < prevRankIdx) {
           demotions += 1;
-          popCap = Math.max(60, Math.round(popCap * 0.7));
+          popCap = Math.max(POP_CAP_FLOOR, Math.round(popCap * 0.7));
           ng.chronicle = [chron(year, season, `Fallen to ${rank}`, `The House has been humbled — fortifications breached, wealth plundered.`, "grief"), ...ng.chronicle];
           ng.rep = { ...rep, respect: clamp01(rep.respect - 12), fear: clamp01(rep.fear - 8), prosperity: clamp01(rep.prosperity - 15) };
           ng.res = chRes(ng.res, { silver: -Math.floor(ng.res.silver * 0.4), food: -Math.floor(ng.res.food * 0.25) } as Partial<Res>);
-          ng.pop = Math.max(24, Math.round(ng.pop * 0.6));
+          ng.pop = Math.max(MIN_POPULATION, Math.round(ng.pop * 0.6));
         } else if (newRankIdx > prevRankIdx) {
           ng.chronicle = [chron(year, season, `Risen to ${rank}`, `Hearthmere is now spoken of as a ${rank.toLowerCase()}.`, "glory"), ...ng.chronicle];
           ng.popCap = Math.round(popCap * 1.4);
@@ -920,7 +1046,8 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
         ng.citizenMemories = memories;
 
         // ──── LOYALTY & FACTIONS ────
-        const loyaltyScore = clamp01(ng.rep.trust + ng.rep.tradition / 2 - (ng.rep.fear > 30 ? 10 : 0) - (ng.atWar.length * 8) - (demotions * 15));
+        const faithLoyal = (ng.faith ? faithSpread(ng.faith) : 0) * 8; // a unified faith unites the people
+        const loyaltyScore = clamp01(ng.rep.trust + ng.rep.tradition / 2 - (ng.rep.fear > 30 ? 10 : 0) - (ng.atWar.length * 8) - (demotions * 15) + faithLoyal);
         let factions = (prev.factions ?? []).map(f => ({ ...f }));
         if (loyaltyScore < 35 && Math.random() < 0.04 * step && factions.length < 3) {
           factions.push({
@@ -938,7 +1065,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
               ng.res = chRes(ng.res, { food: -8, silver: -5 } as Partial<Res>);
               ng.chronicle = [chron(year, season, `${f.name} Strikes`, `Workers withheld their labor — stores diminished.`, "warning"), ...ng.chronicle];
             } else if (Math.random() < 0.2) {
-              ng.pop = Math.max(24, ng.pop - Math.floor(f.members * 0.3));
+              ng.pop = Math.max(MIN_POPULATION, ng.pop - Math.floor(f.members * 0.3));
               ng.chronicle = [chron(year, season, `${f.name} Flees`, `${Math.floor(f.members * 0.3)} souls abandoned the settlement.`, "grief"), ...ng.chronicle];
             }
           }
@@ -1092,8 +1219,8 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   const resolveEvt = (o: EvtOpt) => { setConfirmReset(false); setG(p => { if (!p.evt) return p; const rep = { ...p.rep }; for (const [k, v] of Object.entries(o.rep ?? {}) as [keyof Rep, number][]) rep[k] = clamp01(rep[k] + v); sound.play(p.evt.crisis ? "crisis" : "event"); return { ...p, res: chRes(p.res, o.res ?? {}), rep, prestige: p.prestige + (o.pres ?? 0), evt: null, chronicle: [chron(p.year, p.season, p.evt.title, o.result, "warning"), ...p.chronicle] }; }); };
 
 /* module-level build constants */
-const BUILD_ICONS: Record<string, string> = { homes: "🏠", lumber: "🪓", farm: "🌾", mill: "⚙", mine: "⛏", smith: "🔨", market: "🏪", shrine: "🪦", watch: "🗼" };
-const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm: 90, mill: 75, mine: 85, smith: 65, market: 80, shrine: 60, watch: 70 };
+const BUILD_ICONS: Record<string, string> = { homes: "🏠", lumber: "🪓", farm: "🌾", mill: "⚙", mine: "⛏", smith: "🔨", market: "🏪", shrine: "🪦", watch: "🗼", temple_astra: "🌾", temple_kaelen: "⛏", temple_verna: "🌿", temple_valen: "🐟", temple_morvath: "📜", temple_sol: "⚔" };
+const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm: 90, mill: 75, mine: 85, smith: 65, market: 80, shrine: 60, watch: 70, temple_astra: 90, temple_kaelen: 90, temple_verna: 90, temple_valen: 90, temple_morvath: 90, temple_sol: 90 };
 
   const build = (t: Building) => { setConfirmReset(false); setG(p => {
     const ex = p.buildings.find(b => b.id === t.id);
@@ -1143,6 +1270,50 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     const ch: Record<typeof pol, Partial<Rep>> = { mercy: { trust: 6, fear: -2 }, trade: { prosperity: 6 }, tradition: { tradition: 7, trust: 2 }, envoys: { respect: 4, prosperity: 2 } };
     const titles: Record<typeof pol, string> = { mercy: "Merciful Judgment", trade: "Merchants Welcomed", tradition: "Ancestor Law Renewed", envoys: "Envoys Dispatched" };
     setG(p => { const rep = { ...p.rep }; for (const [k, v] of Object.entries(ch[pol]) as [keyof Rep, number][]) rep[k] = clamp01(rep[k] + v); const baronies = pol === "envoys" ? p.baronies.map((b, i) => i < 10 ? { ...b, rel: cl(b.rel + 5, -100, 100) } : b) : p.baronies; setNotice(titles[pol]); sound.play("click"); return { ...p, rep, baronies, prestige: p.prestige + 1, chronicle: [chron(p.year, p.season, titles[pol], `The council chose ${titles[pol].toLowerCase()}.`, "faith"), ...p.chronicle] }; });
+  };
+
+  // ── worship: spend goods to strengthen a Pillar ──
+  const worship = (d: DeityId) => {
+    setConfirmReset(false);
+    setG(p => {
+      const cost = faithWorshipCosts(d);
+      if (!afford(p.res, cost)) { setNotice(`Need ${fmtD(cost)} to honor ${DEITY_INFO[d].name}.`); return p; }
+      const wr = faithWorshipResult(d);
+      const faith = { ...(p.faith ?? {}), [d]: clamp((p.faith?.[d] ?? 0) + WORSHIP_FAITH, 0, FAITH_MAX) };
+      const rep = { ...p.rep };
+      for (const [k, v] of Object.entries(wr.rep) as [keyof Rep, number][]) rep[k] = clamp01(rep[k] + v);
+      sound.play("click");
+      setNotice(`The ${DEITY_INFO[d].title.toLowerCase()} is honored.`);
+      const afterCost = chRes(p.res, Object.fromEntries(Object.entries(cost).map(([k, v]) => [k, -(v ?? 0)])) as Partial<Res>);
+      return {
+        ...p,
+        res: chRes(afterCost, wr.res),
+        rep, faith,
+        prestige: p.prestige + 1,
+        chronicle: [chron(p.year, p.season, `Rite of ${DEITY_INFO[d].name}`, `The realm honored ${DEITY_INFO[d].name}, ${DEITY_INFO[d].title.toLowerCase()}.`, "faith"), ...p.chronicle],
+      };
+    });
+  };
+
+  // ── council: invoke a Pillar for a season-long blessing ──
+  const councilFaith = (d: DeityId) => {
+    setConfirmReset(false);
+    setG(p => {
+      const faith = { ...(p.faith ?? {}), [d]: clamp((p.faith?.[d] ?? 0) + 4, 0, FAITH_MAX) };
+      const rep = { ...p.rep };
+      const titles: Record<DeityId, string> = {
+        astra: "The Harvest Rite", kaelen: "The Forge Consecration", verna: "The Green Blessing",
+        valen: "The Tides Invoked", morvath: "The Laws Recited", sol: "The Legion Dedicated",
+      };
+      const repGain: Record<DeityId, Partial<Rep>> = {
+        astra: { trust: 3, prosperity: 2 }, kaelen: { prosperity: 3 }, verna: { tradition: 3 },
+        valen: { prosperity: 3 }, morvath: { respect: 3, tradition: 2 }, sol: { respect: 3, fear: 2 },
+      };
+      for (const [k, v] of Object.entries(repGain[d]) as [keyof Rep, number][]) rep[k] = clamp01(rep[k] + v);
+      sound.play("click");
+      setNotice(titles[d]);
+      return { ...p, rep, faith, prestige: p.prestige + 1, chronicle: [chron(p.year, p.season, titles[d], `The council invoked ${DEITY_INFO[d].name}, ${DEITY_INFO[d].title.toLowerCase()}.`, "faith"), ...p.chronicle] };
+    });
   };
 
   const proposeBetrothal = (bid: string) => { setConfirmReset(false); setG(p => {
@@ -1215,7 +1386,9 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     setSpeed(0);
     setPanel(null);
     setG(p => ({ ...p, atWar: p.atWar.includes(selB.id) ? p.atWar : [...p.atWar, selB.id] }));
-    setBattleSetup({ enemyHouse: selB.house, enemyBanner: selB.banner, enemyColor: selB.color, kind, player: { militia: g.army.militia, archers: g.army.archers, spearmen: g.army.spearmen, knights: g.army.knights, royalGuard: g.army.royalGuard }, enemyMilitary: selB.mil, captains: g.army.captains });
+    const solFaith = (g.faith ?? {})["sol"] ?? 0;
+    const morale = solFaith >= DOMINION_THRESHOLD ? 0.1 + solFaith / FAITH_MAX * 0.15 : 0;
+    setBattleSetup({ enemyHouse: selB.house, enemyBanner: selB.banner, enemyColor: selB.color, kind, player: { militia: g.army.militia, archers: g.army.archers, spearmen: g.army.spearmen, knights: g.army.knights, royalGuard: g.army.royalGuard }, enemyMilitary: selB.mil, captains: g.army.captains, morale });
   };
 
   const endBattle = useCallback((o: BattleOutcome) => {
@@ -1275,7 +1448,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     const r = await fetch("/api/game?slot=autosave");
     if (!r.ok) { setNotice(r.status === 401 ? "Sign in to access cloud saves." : "Archive unreachable."); return; }
     const d = await r.json() as { save?: { payload?: GS } | null };
-    if (d.save?.payload?.prices && d.save.payload.army && typeof d.save.payload.day === "number") { setG(d.save.payload); setNotice("Chronicle loaded."); } else setNotice("No compatible save found.");
+    if (d.save?.payload?.prices && d.save.payload.army && typeof d.save.payload.day === "number") { setG(normalizeState(d.save.payload)); setNotice("Chronicle loaded."); } else setNotice("No compatible save found.");
   };
   const reset = () => { if (!confirmReset) { setConfirmReset(true); setNotice("Click reset again to confirm — this opens a blank Chronicle and discards the current one."); return; } const ng = initGame(charData); setG(ng); setPanel(null); setSpeed(0); setConfirmReset(false); const h = ng.settlements.find(s => s.home)!; center(h.x, h.y, 0.55); setNotice("A new blank Chronicle has opened."); };
 
@@ -1333,6 +1506,9 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     if (g.season === "Winter" && g.res.wood < 20) l.push("Firewood is critically low.");
     if (g.family.some(m => m.role === "Child of the House" && m.age === 16)) l.push("A child has come of age.");
     if (g.atWar.length) l.push(`At war with ${g.atWar.length} house(s).`);
+    const dom = getDominantDeity(g.faith ?? {});
+    if (dom) l.push(`The ${DEITY_INFO[dom].title.toLowerCase()} ${DEITY_INFO[dom].name} holds dominion over the realm.`);
+    else if ((g.faith ?? {}) && Object.values(g.faith ?? {}).some(v => v > 5)) l.push("No pillar holds dominion — the temples wait for a champion.");
     if ((g.factions ?? []).length) {
       for (const f of (g.factions ?? [])) {
         if (f.aggression > 70) l.push(`Faction "${f.name}" is growing violent — ${f.members} members seek ${f.goal}.`);
@@ -1625,7 +1801,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       {/* ════ DOCK ════ */}
       <nav data-ui="1" className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-0.5 rounded-2xl border border-white/8 bg-[#0e0d0b]/90 p-1.5 shadow-[0_16px_50px_rgba(0,0,0,.55)] backdrop-blur-2xl">
         {(g.rank === "King of the Realm" || g.rank === "Regional Lord") && <button onClick={() => toggle("Crown")} className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[12px] font-semibold transition ${panel === "Crown" ? "bg-[#c8a84e] text-[#1a1611]" : "bg-amber-900/60 text-amber-200 hover:bg-amber-800/60"}`}><span>♚</span>Crown</button>}
-        {([["Build","🏗"],["Training","⚔️"],["Council","👑"],["Trade","⚖️"],["War","🗡️"],["Factions","🤝"],["Resources","📦"],["Chronicle","📖"]] as const).map(([id, ic]) => (
+        {([["Build","🏗"],["Training","⚔️"],["Council","👑"],["Trade","⚖️"],["War","🗡️"],["Faith","🕯"],["Factions","🤝"],["Resources","📦"],["Chronicle","📖"]] as const).map(([id, ic]) => (
           <button key={id} onClick={() => toggle(id)} className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[12px] font-semibold transition ${panel === id ? "bg-[#c8a84e] text-[#1a1611]" : "hover:bg-white/8"}`}><span>{ic}</span>{id}</button>
         ))}
         <span className="mx-1 h-6 w-px bg-white/10" />
@@ -1680,7 +1856,18 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
             {!buildMode && g.placedBuildings.filter(pb => pb.sid === g.selSid).length > 0 && <div className="mt-4 border-t border-white/8 pt-3"><p className="mb-2 text-[11px] uppercase tracking-wider text-[#8d8674]">Placed Buildings ({g.placedBuildings.filter(pb => pb.sid === g.selSid).length})</p><div className="flex flex-wrap gap-2">{g.placedBuildings.filter(pb => pb.sid === g.selSid).map(pb => <div key={pb.id} className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-[11px]"><span>{BUILD_ICONS[pb.buildId] ?? "🏗"}</span><span className="font-medium">{pb.name}</span><span className="text-[10px] text-[#8d8674]">Lv {pb.level}</span><button onClick={() => removeBuilding(pb.id)} className="ml-1 rounded-full bg-red-900/50 px-1.5 py-0.5 text-[9px] text-red-200 hover:bg-red-800/50">✕</button></div>)}</div></div>}
           </div>}
           {panel === "Training" && <div className="grid gap-3 md:grid-cols-3"><AC t="Muster Militia" b="Drill defenders with food, weapons and silver." bt="Train" fn={trainAct} /><AC t="Tactical Doctrine" b={`Doctrine favours ${g.ruler.path}.`} bt="Study" fn={trainAct} /><AC t="Border Watch" b="Post rangers to track rival movements." bt="Post" fn={trainAct} /></div>}
-          {panel === "Council" && <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4"><AC t="Merciful Judgment" b="Raise trust, reduce fear." bt="Judge" fn={() => council("mercy")} /><AC t="Open Trade" b="Invite merchants and foreign coin." bt="Invite" fn={() => council("trade")} /><AC t="Honour Old Faith" b="Strengthen tradition." bt="Gather" fn={() => council("tradition")} /><AC t="Send Envoys" b="Improve relations broadly." bt="Dispatch" fn={() => council("envoys")} /><AC t={`Propose Marriage to ${selB.house}`} b="Seal a betrothal alliance. 30 silver, 15+ relations." bt="💍 Propose" fn={() => proposeBetrothal(selB.id)} /><BetrothalPanel g={g} /></div>}
+          {panel === "Council" && <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4"><AC t="Merciful Judgment" b="Raise trust, reduce fear." bt="Judge" fn={() => council("mercy")} /><AC t="Open Trade" b="Invite merchants and foreign coin." bt="Invite" fn={() => council("trade")} /><AC t="Honour Old Faith" b="Strengthen tradition." bt="Gather" fn={() => council("tradition")} /><AC t="Send Envoys" b="Improve relations broadly." bt="Dispatch" fn={() => council("envoys")} /><AC t={`Propose Marriage to ${selB.house}`} b="Seal a betrothal alliance. 30 silver, 15+ relations." bt="💍 Propose" fn={() => proposeBetrothal(selB.id)} /><BetrothalPanel g={g} />
+            <div className="col-span-full border-t border-white/8 pt-3">
+              <p className="mb-2 text-[10px] uppercase tracking-wider text-[#c8a84e]">Invoke the Six Pillars</p>
+              <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                {DEITY_IDS.map(d => {
+                  const info = DEITY_INFO[d];
+                  const isPatron = PATH_DEITY[g.ruler.path] === d;
+                  return <AC key={d} t={`${info.icon} ${info.name}${isPatron ? " ★" : ""}`} b={`Invoke ${info.name} — ${info.domain}.`} bt="Invoke" fn={() => councilFaith(d)} />;
+                })}
+              </div>
+              <p className="mt-2 text-[9px] text-[#8d8674]">★ marks your patron pillar — invoking it deepens your house's bond.</p>
+            </div></div>}
           {panel === "Resources" && <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7">{(Object.entries(g.res) as [RN, number][]).map(([k, v]) => { const liveRate = seasonRateMemo[k] ?? 0; return <div key={k} title={`${liveRate >= 0 ? "+" : ""}${liveRate.toFixed(1)} per season. ${RICONS[k]} ${k} is used for buildings, trade, and survival.`} className="rounded-2xl bg-white/3 p-3"><p className="text-[10px] uppercase tracking-wide text-[#8d8674]">{RICONS[k]} {k}</p><p className="text-xl font-bold tabular-nums">{Math.floor(v)}</p><p className={`text-[10px] tabular-nums ${liveRate >= 0 ? "text-emerald-400" : "text-red-400"}`}>{liveRate >= 0 ? "+" : ""}{liveRate.toFixed(1)}/season</p></div>; })}</div>}
           {panel === "Chronicle" && <div><input value={cSearch} onChange={e => setCSearch(e.target.value)} placeholder="Search the Chronicle…" className="mb-3 w-full rounded-full border border-white/8 bg-white/4 px-4 py-2 text-[12px] outline-none placeholder:text-white/25 focus:border-[#c8a84e]/40" /><div className="mb-2 flex flex-wrap gap-1">{(["all","hope","glory","grief","warning","trade","faith"] as const).map(tone => <button key={tone} onClick={() => setCTone(tone)} className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition ${cTone === tone ? "bg-[#c8a84e] text-[#1a1611]" : "bg-white/6 hover:bg-white/10"}`}>{tone === "all" ? "All" : tone}</button>)}</div><div className="space-y-1.5 text-[12px]">{filtChron.slice(0, 200).map(e => <div key={e.id} className="rounded-xl bg-white/3 px-3 py-2"><span className="mr-2 text-[10px] text-[#8d8674]">Y{e.year} {e.season}</span><strong className="text-[#c8a84e]">{e.title}</strong> <span className="text-[#bbb5a0]">{e.text}</span></div>)}</div></div>}
           {panel === "Realm" && <RealmPanel g={g} search={rSearch} setSearch={setRSearch} pickB={pickB} center={center} />}
@@ -1691,6 +1878,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
           {panel === "Villager" && selC && <VillPanel c={selC} g={g} center={center} tab={cTab} setTab={setCTab} />}
           {panel === "Crown" && <CrownPanel g={g} grantTitle={grantTitle} resolveCrisis={resolveCrownCrisis} recruitRoyalGuard={recruitRoyalGuard} />}
           {panel === "Factions" && <FactionRepPanel g={g} home={home} />}
+          {panel === "Faith" && <FaithPanel g={g} worship={worship} councilFaith={councilFaith} rulerPath={g.ruler.path} />}
         </div>
       )}
 
@@ -1920,7 +2108,7 @@ function VillPanel({ c, g, center, tab, setTab }: { c: Citizen; g: GS; center: (
       <div>
         <div className="mb-3 flex gap-1">{(["Info", "Skills", "Memories"] as const).map(t => <button key={t} onClick={() => setTab(t)} className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold ${tab === t ? "bg-[#c8a84e] text-[#1a1611]" : "bg-white/6"}`}>{t}</button>)}</div>
         {tab === "Info" && <p className="text-[12px] text-[#bbb5a0]">A {c.occ} of {s?.name}, working the same rounds each day. {c.traits.join(" and ")} by nature.</p>}
-        {tab === "Skills" && <div className="space-y-1">{(Object.entries(c.skills) as [string, number][]).map(([k, v]) => <Meter key={k} l={k} v={v * 10} />)}</div>}
+        {tab === "Skills" && <div className="space-y-1">{(Object.entries(c.skills) as [string, number][]).map(([k, v]) => <Meter key={k} l={k} v={v * 10} />)}<p className="pt-1 text-[10px] text-[#8d8674]">Realm faith amplifies a villager&apos;s devotion and craft.</p></div>}
         {tab === "Memories" && <ul className="list-disc space-y-1 pl-4 text-[12px] text-[#bbb5a0]">{c.memories.map(m => <li key={m}>{m}</li>)}</ul>}
       </div>
     </div>
@@ -2139,6 +2327,82 @@ function CrownPanel({ g, grantTitle, resolveCrisis, recruitRoyalGuard }: { g: GS
 
 function Meter({ l, v }: { l: string; v: number }) {
   return <div className="mt-1.5"><div className="mb-0.5 flex justify-between text-[10px] uppercase tracking-wider text-[#8d8674]"><span>{l}</span><span>{Math.round(v)}</span></div><div className="h-1.5 rounded-full bg-white/8"><div className="h-full rounded-full bg-gradient-to-r from-[#9a7a30] to-[#c8a84e]" style={{ width: `${clamp01(v)}%` }} /></div></div>;
+}
+
+function FaithPanel({ g, worship, councilFaith, rulerPath }: { g: GS; worship: (d: DeityId) => void; councilFaith: (d: DeityId) => void; rulerPath: Path }) {
+  const faith = g.faith ?? {};
+  const dominant = getDominantDeity(faith);
+  const temples = g.buildings.filter(b => TEMPLE_OF[b.id]);
+  return (
+    <div className="space-y-5">
+      {/* Dominion banner */}
+      <div className="rounded-2xl border border-[#c8a84e]/25 bg-gradient-to-r from-[#c8a84e]/15 to-transparent p-4">
+        {dominant ? (
+          <div className="flex items-center gap-4">
+            <img src={DEITY_SVGS[dominant]} alt={DEITY_INFO[dominant].name} className="h-16 w-16 rounded-xl object-cover ring-2 ring-[#c8a84e]/40" />
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-[#c8a84e]">Dominant Pillar</p>
+              <h3 className="text-[16px] font-bold">{DEITY_INFO[dominant].name} — {DEITY_INFO[dominant].title}</h3>
+              <p className="text-[11px] text-[#bbb5a0]">{DEITY_INFO[dominant].domain}. <span className="text-emerald-400">Active: {DEITY_INFO[dominant].benefit}</span></p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-[12px] text-[#bbb5a0]">No pillar yet holds dominion ({DOMINION_THRESHOLD}+ faith). Honor a deity through worship, council rites, or temples to earn its blessing.</p>
+        )}
+      </div>
+
+      {/* Deity cards */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {DEITY_IDS.map(d => {
+          const info = DEITY_INFO[d];
+          const v = faith[d] ?? 0;
+          const isPatron = PATH_DEITY[rulerPath] === d;
+          const isDom = dominant === d;
+          const hasTemple = temples.some(b => TEMPLE_OF[b.id] === d);
+          const cost = faithWorshipCosts(d);
+          const affordIt = (Object.keys(cost) as RN[]).every(k => g.res[k] >= (cost[k] ?? 0));
+          return (
+            <div key={d} className={`rounded-2xl border p-4 transition ${isDom ? "border-[#c8a84e] bg-[#c8a84e]/10" : "border-white/6 bg-white/3"}`}>
+              <div className="flex items-start gap-3">
+                <img src={DEITY_SVGS[d]} alt={info.name} className="h-14 w-14 rounded-xl object-cover ring-1 ring-white/10" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-semibold leading-tight">{info.icon} {info.name}{isPatron ? " <span className='text-[#c8a84e]'>★</span>" : ""}{isDom ? " <span className='text-[10px] text-emerald-400'>· Dominion</span>" : ""}</p>
+                  <p className="text-[9px] uppercase tracking-wider text-[#8d8674]">{info.title}</p>
+                  <p className="mt-0.5 text-[10px] text-[#bbb5a0]">{info.domain}</p>
+                </div>
+              </div>
+              <div className="mt-3">
+                <div className="mb-0.5 flex justify-between text-[9px] text-[#8d8674]"><span>Faith {Math.round(v)}/{FAITH_MAX}</span>{hasTemple && <span className="text-[#c8a84e]">temple +{TEMPLE_FAITH}/season</span>}</div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-white/8"><div className="h-full rounded-full" style={{ width: `${v}%`, background: info.color }} /></div>
+              </div>
+              <p className="mt-2 text-[10px] text-[#bbb5a0]">Blessing: {info.benefit}</p>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                <button onClick={() => worship(d)} disabled={!affordIt} className={`flex-1 rounded-lg px-3 py-1.5 text-[10px] font-semibold transition ${affordIt ? "bg-[#c8a84e] text-[#1a1611] hover:brightness-110" : "cursor-not-allowed bg-white/6 text-[#8d8674] opacity-50"}`}>Worship · {fmtD(cost)}</button>
+                <button onClick={() => councilFaith(d)} className="rounded-lg bg-white/6 px-3 py-1.5 text-[10px] font-semibold hover:bg-white/12">Invoke</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Temples */}
+      <div className="rounded-2xl border border-white/6 bg-white/3 p-4">
+        <p className="mb-2 text-[10px] uppercase tracking-wider text-[#8d8674]">Temples of the Pillars ({temples.length})</p>
+        {temples.length === 0 ? (
+          <p className="text-[11px] text-[#bbb5a0]">No temples raised yet. Build them under <strong>Build</strong> — each sustains its deity&apos;s faith (+{TEMPLE_FAITH}/season) and grants its own production.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {temples.map(t => (
+              <span key={t.id} className="flex items-center gap-1.5 rounded-xl bg-white/5 px-3 py-1.5 text-[11px]">
+                <img src={DEITY_SVGS[TEMPLE_OF[t.id]]} alt="" className="h-5 w-5 rounded object-cover" />
+                {t.name} <span className="text-[9px] text-[#c8a84e]">Lv {t.level}</span>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 function AC({ t, b, bt, fn }: { t: string; b: string; bt: string; fn: () => void }) {
   return <div className="rounded-2xl border border-white/6 bg-white/3 p-4"><h3 className="text-[13px] font-semibold text-[#c8a84e]">{t}</h3><p className="mt-1 text-[11px] text-[#bbb5a0]">{b}</p><button onClick={fn} className="mt-3 rounded-lg bg-[#c8a84e] px-4 py-1.5 text-[11px] font-semibold text-[#1a1611]">{bt}</button></div>;
