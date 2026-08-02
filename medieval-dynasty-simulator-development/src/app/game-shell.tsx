@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { MainMenu, type RegionChoice, type BannerChoice, type GenderChoice, type PortraitChoice } from "./main-menu";
 import { IntroCinematic } from "./intro-cinematic";
 import { GameClient } from "./game-client";
@@ -16,6 +16,43 @@ export function GameShell() {
     try { return !!localStorage.getItem("dotr-v8"); } catch { return false; }
   });
   const [user, setUser] = useState<{ email?: string } | null>(null);
+
+  // Keyboard navigation handler for accessibility
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setPhase("menu");
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Initialize progress persistence across sessions
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("dotr-progress");
+      if (saved) {
+        const progress = JSON.parse(saved);
+        if (progress.phase && progress.phase !== "onboarding") {
+          setPhase(progress.phase as GamePhase);
+        }
+      }
+    } catch {
+      // ignore parsing errors
+    }
+  }, []);
+
+  // Save current phase to localStorage when it changes
+  useEffect(() => {
+    if (phase !== "onboarding") {
+      try {
+        localStorage.setItem("dotr-progress", JSON.stringify({ phase }));
+      } catch {
+        // ignore storage errors
+      }
+    }
+  }, [phase]);
 
   // Character creation data
   const [charData, setCharData] = useState<{

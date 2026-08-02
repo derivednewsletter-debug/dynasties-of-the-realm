@@ -187,16 +187,19 @@ const uid = (prefix: string) => `${prefix}-${Math.random().toString(36).slice(2,
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 const clamp01 = (v: number) => clamp(Math.round(v), 0, 100);
 const clampTrust = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+const cl = clamp; // Backward compatibility for existing code
+const cl01 = clamp01; // Backward compatibility for existing code
 
 // Encryption utilities for secure localStorage
 const ENCRYPTION_KEY = "dynasty-game-encryption-key-v1.2";
-function encrypt(text: string): string {
+
+async function encrypt(text: string): Promise<string> {
   try {
     const encoder = new TextEncoder();
     const data = encoder.encode(text);
-    const key = window.crypto.subtle.importKey("raw", new TextEncoder().encode(ENCRYPTION_KEY), { name: "AES-GCM" }, false, ["encrypt"]);
+    const key = await window.crypto.subtle.importKey("raw", encoder.encode(ENCRYPTION_KEY), { name: "AES-GCM" }, false, ["encrypt"]);
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
-    const ciphertext = window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data);
+    const ciphertext = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data);
     const combined = new Uint8Array([...iv, ...new Uint8Array(ciphertext)]);
     return btoa(String.fromCharCode(...combined));
   } catch {
@@ -204,26 +207,29 @@ function encrypt(text: string): string {
   }
 }
 
-function decrypt(encrypted: string): string {
+async function decrypt(encrypted: string): Promise<string> {
   try {
     const combined = new Uint8Array(Array.from(atob(encrypted), c => c.charCodeAt(0)));
     const iv = combined.slice(0, 12);
     const data = combined.slice(12);
-    const key = window.crypto.subtle.importKey("raw", new TextEncoder().encode(ENCRYPTION_KEY), { name: "AES-GCM" }, false, ["decrypt"]);
-    const plaintext = window.crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data);
+    const key = await window.crypto.subtle.importKey("raw", new TextEncoder().encode(ENCRYPTION_KEY), { name: "AES-GCM" }, false, ["decrypt"]);
+    const plaintext = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data);
     return new TextDecoder().decode(plaintext);
   } catch {
     return encrypted;
   }
 }
 
-function validateSaveState(state: unknown): boolean {
-  if (!state || typeof state !== "object") return false;
-  if (Array.isArray(state)) return false;
-  if (state.prices && state.army && state.settlements?.length && typeof state.day === "number") {
-    return true;
-  }
-  return false;
+function validateSaveState(state: unknown): state is any {
+  return Boolean(
+    state &&
+    typeof state === "object" &&
+    !Array.isArray(state) &&
+    "prices" in state &&
+    "army" in state &&
+    state.settlements?.length &&
+    typeof state.day === "number"
+  );
 }
   const chRes = (r: Res, d: Partial<Res>): Res => { const n = { ...r }; for (const k of Object.keys(d) as RN[]) n[k] = Math.max(0, n[k] + (d[k] ?? 0)); return n; };
   const afford = (r: Res, c: Partial<Res>) => (Object.keys(c) as RN[]).every(k => r[k] >= (c[k] ?? 0));
@@ -526,15 +532,21 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
     try {
       const encrypted = localStorage.getItem("dotr-v8");
       if (encrypted) {
-        const decrypted = decrypt(encrypted);
-        const p = JSON.parse(decrypted) as GS;
-        if (validateSaveState(p)) {
-          setG(p);
-          setNotice("Chronicle restored.");
-        } else {
-          localStorage.removeItem("dotr-v8");
-          setNotice("Old save data was invalid - starting new.");
-        }
+        (async () => {
+          try {
+            const decrypted = await decrypt(encrypted);
+            const p = JSON.parse(decrypted) as GS;
+            if (validateSaveState(p)) {
+              setG(p);
+              setNotice("Chronicle restored.");
+            } else {
+              localStorage.removeItem("dotr-v8");
+              setNotice("Old save data was invalid - starting new.");
+            }
+          } catch {
+            localStorage.removeItem("dotr-v8");
+          }
+        })();
       }
     } catch {
       localStorage.removeItem("dotr-v8");
