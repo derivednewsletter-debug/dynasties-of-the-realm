@@ -120,6 +120,7 @@ const BUILDS: Building[] = [
 ];
 
 const EVENTS: DecEvt[] = [
+  // ── Any rank ──
   { id: "storm", title: "The Summer Storm", text: "A terrible storm has struck. Homes damaged, fields flooded.", crisis: true, opts: [
     { label: "Send workers to help", hint: "+trust", result: "Every free hand shored up roofs.", res: { silver: -10 }, rep: { trust: 6 }, pres: -1 },
     { label: "Assess the damage first", hint: "careful", result: "Losses catalogued before action.", rep: { respect: 2 } },
@@ -141,6 +142,39 @@ const EVENTS: DecEvt[] = [
     { label: "Store it against winter", hint: "+food", result: "Granaries filled to the rafters.", res: { food: 40 }, rep: { prosperity: 4 } },
     { label: "Sell the surplus", hint: "+silver", result: "Merchants paid well for the grain.", res: { food: 10, silver: 35 }, rep: { prosperity: 6 } },
     { label: "Hold a feast", hint: "+trust", result: "The whole valley ate and danced.", res: { food: -10 }, rep: { trust: 10, tradition: 4 } } ] },
+  // ── Hamlet/Village ──
+  { id: "wolf", title: "Wolves in the Fold", text: "A pack of wolves has been slaughtering sheep in the outer pastures.", crisis: false, opts: [
+    { label: "Send hunters", hint: "+respect", result: "The pack was driven into the deep wood.", rep: { respect: 4, trust: 2 } },
+    { label: "Build better enclosures", hint: "-wood", result: "Stronger pens were raised overnight.", res: { wood: -12 }, rep: { prosperity: 4 } } ] },
+  { id: "stranger", title: "A Stranger at the Gate", text: "A weary traveller seeks shelter and promises news from distant lands.", crisis: false, opts: [
+    { label: "Welcome them", hint: "+tradition", result: "The hearth was shared and tales were told.", res: { food: -4 }, rep: { tradition: 4, trust: 3 } },
+    { label: "Turn them away", hint: "safe", result: "The gates stayed barred through the night.", rep: { fear: 2 } } ] },
+  // ── Village/Town ──
+  { id: "guild", title: "The Guild's Demand", text: "The local crafters' guild demands recognition and lower taxes on their wares.", crisis: false, opts: [
+    { label: "Grant the charter", hint: "+prosperity", result: "The guild hung a new sign with pride.", res: { silver: -20 }, rep: { prosperity: 8, trust: 5 } },
+    { label: "Refuse the demand", hint: "risk unrest", result: "Some artisans packed their tools and left.", res: { silver: 10 }, rep: { fear: 4, trust: -4 }, pres: -2 } ] },
+  { id: "tourney", title: "A Tournament Called", text: "Neighboring lords gather for a grand tourney — an opportunity for prestige.", crisis: false, opts: [
+    { label: "Host the tourney", hint: "+prestige", result: "Banners flew as the lists were laid.", res: { food: -15, silver: -30 }, pres: 8, rep: { respect: 6, trust: 3 } },
+    { label: "Send a champion", hint: "modest", result: "A single knight rode under the House banner.", res: { silver: -12 }, pres: 3, rep: { respect: 3 } } ] },
+  // ── City and above ──
+  { id: "conspiracy", title: "A Conspiracy Unearthed", text: "Whispers of a plot to replace your steward have reached the council.", crisis: true, opts: [
+    { label: "Root out the conspirators", hint: "+fear", result: "Cells were uncovered and the ringleaders exiled.", rep: { fear: 10, trust: -4, respect: 5 } },
+    { label: "Offer clemency", hint: "+trust", result: "Mercy was shown and loyalty sworn anew.", rep: { trust: 8, fear: -3, tradition: 3 } } ] },
+  { id: "embassy", title: "A Royal Embassy", text: "An embassy from a distant kingdom arrives seeking a trade treaty.", crisis: false, opts: [
+    { label: "Seal the treaty", hint: "+prosperity", result: "Ink dried on the parchment as horns sounded.", res: { silver: -25 }, rep: { prosperity: 10, respect: 6 } },
+    { label: "Send them away with gifts", hint: "diplomatic", result: "Gold and pelts made the journey worthwhile.", res: { silver: -40 }, rep: { respect: 8 } } ] },
+  // ── Petty Barony and above ──
+  { id: "rebellion", title: "A Tax Rebellion", text: "Farmers from the eastern holdings are refusing to pay the harvest tithe.", crisis: true, opts: [
+    { label: "Send the guard", hint: "+fear", result: "The tithe was collected by force.", res: { food: 15, silver: 10 }, rep: { fear: 8, trust: -8 } },
+    { label: "Negotiate a lower rate", hint: "+trust", result: "A compromise was struck in the village square.", res: { food: 6 }, rep: { trust: 6, tradition: 2 } } ] },
+  // ── King of the Realm ──
+  { id: "crown_schism", title: "The Faith Divided", text: "The high priests have split into rival sects. Your blessing is sought to settle the schism.", crisis: true, opts: [
+    { label: "Side with the reformers", hint: "+prosperity", result: "New doctrine was declared from the throne.", rep: { prosperity: 8, tradition: -6, trust: -3 } },
+    { label: "Defend the old ways", hint: "+tradition", result: "Ancestral rites were reaffirmed by royal decree.", rep: { tradition: 10, trust: 4, prosperity: -3 } },
+    { label: "Stay neutral", hint: "safe", result: "The Crown remained above the fray.", rep: { respect: 3, trust: -2 } } ] },
+  { id: "crown_war", title: "War on the Horizon", text: "A coalition of border baronies is massing troops. The Crown must decide.", crisis: true, opts: [
+    { label: "Muster the royal host", hint: "+prestige", result: "War drums beat from the capital.", res: { weapons: -6, food: -20, silver: -40 }, rep: { fear: 10, respect: 8 } },
+    { label: "Seek a diplomatic solution", hint: "+trust", result: "Envoys rode through the night.", res: { silver: -35 }, rep: { trust: 5, respect: 3 } } ] },
 ];
 
 /* ───────── helpers ───────── */
@@ -296,9 +330,7 @@ function initGame(cd?: CharData): GS {
   const bannerIcon = cd?.banner ? { Lion: "🦁", Eagle: "🦅", Oak: "🌳", Wolf: "🐺", Crown: "♚" }[cd.banner] : "♜";
   const rulerPath = cd?.path ?? "Forest & Beast";
 
-  // Place home in chosen region
-  const regionPos = { "Forest Valley": { x: 3500, y: 5000 }, "Golden Plains": { x: 7500, y: 5500 }, "Mountain Highlands": { x: 6500, y: 1800 }, "Coastal Bay": { x: 12000, y: 4800 }, "River Kingdom": { x: 2500, y: 7200 } }[regionChoice];
-  const pos = regionPos;
+  // Home position is determined by the chosen region
 
   const ruler: Family = { id: "ruler", name: `${firstName} ${houseName}`, age: 40, role: `${title} of Hearthmere`, path: rulerPath as Path, traits: ["orphaned", "patient", "woods-wise"], status: "Living" };
 
@@ -351,8 +383,6 @@ function seasonRate(g: GS): Partial<Res> {
   return d;
 }
 const promoteRank = (g: GS) => { const s = g.pop + g.prestige * 2 + g.rep.prosperity; return s > 2000 ? "King of the Realm" : s > 1500 ? "Regional Lord" : s > 1100 ? "Great Barony" : s > 780 ? "Small Barony" : s > 580 ? "Petty Barony" : s > 430 ? "City" : s > 300 ? "Town" : s > 210 ? "Village" : "Hamlet"; };
-const demotionThreshold = (rank: string) => ({ "King of the Realm": 1500, "Regional Lord": 1000, "Great Barony": 700, "Small Barony": 500, "Petty Barony": 350, "City": 220, "Town": 140, "Village": 70, "Hamlet": 0 } as Record<string, number>)[rank] ?? 0;
-
 /* ───── faction reputation helpers ───── */
 function recordFactionAction(rep: FactionReputation[], bid: string, action: ActionType, magnitude: number, year: number, season: Season, text: string): FactionReputation[] {
   return rep.map(fr => {
@@ -534,6 +564,8 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
         }
 
         // season / year boundary
+        let citizens = prev.citizens;
+
         if (day > DAYS_PER_SEASON) {
           day -= DAYS_PER_SEASON;
           const ni = (SEASONS.indexOf(season) + 1) % 4;
@@ -541,7 +573,44 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           if (ni === 0) {
             year += 1;
             const hunger = res.food < pop / 3;
+            // Natural births — food surplus creates new citizens (pop adjusts per-citizen below)
+            const surplusFactor = Math.max(0, Math.floor((res.food - pop / 2) / 15));
             pop = Math.max(24, Math.min(popCap, pop + Math.max(-4, Math.min(6, Math.round(rep.prosperity / 18) - (hunger ? 6 : 0)))));
+            // Age all citizens
+            const aged = citizens.map(c => ({
+              ...c, age: c.age + 1,
+              mood: cl01(c.mood + (hunger ? -3 : 1)),
+            }));
+            // Elderly citizens may pass away; survivors become the new citizen list
+            const alive: Citizen[] = [];
+            const hearthSid = (prev.settlements.find(s => s.home) ?? prev.settlements[0])?.id;
+            for (const c of aged) {
+              if (c.age > 65 && Math.random() < Math.min(0.25, (c.age - 65) * 0.015)) {
+                extra.push(chron(year, season, `${c.name} Passes`, `${c.name}, a ${c.occ} of Hearthmere, died at age ${c.age}.`, "grief"));
+                pop = Math.max(24, pop - 1);
+              } else if (c.age > 55 && Math.random() < 0.06) {
+                alive.push({ ...c, occ: ["elder", "sage", "retired"][Math.floor(Math.random() * 3)], traits: [...c.traits, "wise"] });
+              } else {
+                alive.push(c);
+              }
+            }
+            // Replace departed citizens plus natural growth from food surplus
+            const netLoss = aged.length - alive.length;
+            const growth = Math.min(popCap - pop, surplusFactor + (Math.random() < 0.4 ? 1 : 0));
+            for (let i = 0; i < netLoss + growth; i++) {
+              if (pop >= popCap) break;
+              const newC: Citizen = {
+                id: uid("cz"), name: `${NAMES[(year + i) % NAMES.length]} ${SURNAMES[(year * 3 + i) % SURNAMES.length]}`,
+                occ: OCCS[(year + i) % OCCS.length], age: 16 + (i * 3) % 10, mood: 60 + Math.floor(Math.random() * 20),
+                skills: { gathering: 2, craft: 1, combat: 1, faith: 2 },
+                traits: ["young", "hopeful"],
+                memories: [`Born in the year ${year} under the banner of ${charData?.houseName ?? "Sheatsley"}.`],
+                sid: hearthSid, orbit: 60 + Math.floor(Math.random() * 40), dur: 50 + Math.random() * 60, phase: Math.random() * 100, rev: Math.random() < 0.3,
+              };
+              alive.push(newC);
+              pop += 1;
+            }
+            citizens = alive;
             const lc = family.filter(m => m.status === "Living").length;
             family = family.map(m => {
               if (m.status !== "Living") return m;
@@ -568,6 +637,12 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
             if (rr?.status === "Dead") {
               const cand = family.filter(m => m.status === "Living" && m.id !== "mentor").sort((a, b) => b.age - a.age)[0];
               if (cand) { ruler = { ...cand, role: "Chief of Hearthmere" }; family = family.map(m => m.id === cand.id ? ruler : m); const ph = prev.baronies[0]?.house ?? "House Sheatsley"; extra.unshift(chron(year, season, `${cand.name} Takes the Seat`, `${cand.name} rose to lead ${ph}.`, "glory")); toast = { title: "A New Chief", body: `${cand.name} now leads the House.`, portrait: portrait(cand, 0, charData?.portrait) }; }
+              // At lower ranks, succession can still cause drama
+              const otherHeirs = family.filter(m => m.status === "Living" && m.id !== "mentor" && m.id !== cand?.id && m.age >= 14).length;
+              if (otherHeirs > 0 && Math.random() < 0.3) {
+                extra.push(chron(year, season, "Succession Disputed", `Rival kinsmen murmured against ${cand?.name}'s claim. The elders backed the rightful heir.`, "warning"));
+                rep = { ...rep, trust: cl01(rep.trust - 3), respect: cl01(rep.respect - 2) };
+              }
             } else ruler = family.find(m => m.id === ruler.id) ?? ruler;
             prestige += 1;
           }
@@ -597,8 +672,8 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           for (const r of roads) {
             if (r.decayed) continue;
             const a = prev.settlements.find(s => s.id === r.fromSid);
-            const b2 = prev.settlements.find(s => s.id === r.toSid);
-            if (a && b2 && (a.pop < 30 || b2.pop < 30)) {
+            const settTo = prev.settlements.find(s => s.id === r.toSid);
+            if (a && settTo && (a.pop < 30 || settTo.pop < 30)) {
               r.decayed = true;
               r.level = Math.max(2, r.level - 1);
             }
@@ -617,9 +692,24 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           baronies = prev.baronies.map((b, i) => { const p = ((i * 5 + b.eco + b.mil) % 9) - 4; return { ...b, eco: cl01(b.eco + p * 0.4), mil: cl01(b.mil + (p > 0 ? 1 : -0.5)), rel: cl(b.rel + (p > 2 ? -1 : 0.4), -100, 100) }; });
         }
 
-        // random decision event
+        // random decision event — filter by current rank to avoid anachronisms
         let evt: DecEvt | null = null;
-        if (Math.random() < 0.008 * step) evt = EVENTS[Math.floor(Math.random() * EVENTS.length)];
+        if (Math.random() < 0.008 * step) {
+          const currentRank = promoteRank({ ...prev, pop, prestige, rep });
+          const eligibleEvents = EVENTS.filter(e => {
+            const earlyRanks = ["Hamlet", "Village", "Town"];
+            const midRanks = ["Town", "City", "Petty Barony", "Small Barony"];
+            const highRanks = ["Petty Barony", "Small Barony", "Great Barony", "Regional Lord"];
+            const crownRanks = ["King of the Realm"];
+            if (e.id === "wolf" || e.id === "stranger") return earlyRanks.includes(currentRank);
+            if (e.id === "guild" || e.id === "tourney") return [...earlyRanks, ...midRanks, ...highRanks].includes(currentRank);
+            if (e.id === "conspiracy" || e.id === "embassy") return midRanks.includes(currentRank) || highRanks.includes(currentRank) || crownRanks.includes(currentRank);
+            if (e.id === "rebellion") return highRanks.includes(currentRank) || crownRanks.includes(currentRank);
+            if (e.id === "crown_schism" || e.id === "crown_war") return crownRanks.includes(currentRank);
+            return true; // legacy events work at any rank
+          });
+          if (eligibleEvents.length > 0) evt = eligibleEvents[Math.floor(Math.random() * eligibleEvents.length)];
+        }
 
         // ──── FOG OF WAR: reveal hexes around settlements each season ────
         let exploredHexes = prev.exploredHexes;
@@ -648,7 +738,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           }
         }
 
-        const ng: GS = { ...prev, day, year, season, res, rate, pop, popCap, family, ruler, prestige, rep, caravans, baronies, evt, toast, chronicle: extra.length ? [...extra.reverse(), ...prev.chronicle].slice(0, 400) : prev.chronicle, exploredHexes };
+        const ng: GS = { ...prev, day, year, season, res, rate, pop, popCap, family, ruler, citizens, prestige, rep, caravans, baronies, evt, toast, chronicle: extra.length ? [...extra.reverse(), ...prev.chronicle].slice(0, 400) : prev.chronicle, exploredHexes };
         if (seasonRoads) ng.roads = seasonRoads;
         // ──── DEMOTION CHECK ────
         const rank = promoteRank(ng);
@@ -716,7 +806,9 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
               ng.chronicle = [chron(year, season, `${f.name} Flees`, `${Math.floor(f.members * 0.3)} souls abandoned the settlement.`, "grief"), ...ng.chronicle];
             }
           }
-          f.aggression = cl01(f.aggression + (loyaltyScore < 30 ? 3 : -2));
+          // Aggression scales with loyalty — fast decay when people are happy
+          const aggDelta = loyaltyScore < 20 ? 4 : loyaltyScore < 35 ? 2 : loyaltyScore < 50 ? -1 : loyaltyScore < 70 ? -3 : -6;
+          f.aggression = cl01(f.aggression + aggDelta);
           if (f.aggression > 90) {
             ng.res = chRes(ng.res, { silver: -15, food: -5 } as Partial<Res>);
             ng.rep.trust = cl01(ng.rep.trust - 8);
