@@ -227,7 +227,10 @@ function validateSaveState(state: unknown): state is any {
     !Array.isArray(state) &&
     "prices" in state &&
     "army" in state &&
-    state.settlements?.length &&
+    ("settlements" in state) &&
+    Array.isArray(state.settlements) &&
+    state.settlements.length > 0 &&
+    "day" in state &&
     typeof state.day === "number"
   );
 }
