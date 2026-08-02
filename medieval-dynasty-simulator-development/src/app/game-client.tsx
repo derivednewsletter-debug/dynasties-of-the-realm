@@ -193,6 +193,10 @@ const cl01 = clamp01; // Backward compatibility for existing code
 // Encryption utilities for secure localStorage
 const ENCRYPTION_KEY = "dynasty-game-encryption-key-v1.2";
 
+// Encryption utilities for secure localStorage
+const ENCRYPTION_KEY = "dynasty-game-encryption-key-v1.2";
+
+// Async encryption wrapper for browser compatibility
 async function encrypt(text: string): Promise<string> {
   if (typeof window === 'undefined' || !window.crypto) {
     return text; // Node.js or no crypto environment
@@ -226,6 +230,47 @@ async function decrypt(encrypted: string): Promise<string> {
   } catch {
     return encrypted;
   }
+}
+
+// Compatibility functions for code that expects synchronous interface
+function encryptSync(text: string): string {
+  if (typeof window === 'undefined' || !window.crypto) {
+    return text;
+  }
+  // Try to use sync methods if available, otherwise use async
+  if (window.crypto.subtle.importKeySync) {
+    try {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(text);
+      const key = window.crypto.subtle.importKeySync("raw", encoder.encode(ENCRYPTION_KEY), { name: "AES-GCM" }, false, ["encrypt"]);
+      const iv = window.crypto.getRandomValues(new Uint8Array(12));
+      const ciphertext = window.crypto.subtle.encryptSync({ name: "AES-GCM", iv }, key, data);
+      const combined = new Uint8Array([...iv, ...new Uint8Array(ciphertext)]);
+      return btoa(String.fromCharCode(...combined));
+    } catch {
+      return text;
+    }
+  }
+  return ""; // Fallback for environments without sync API
+}
+
+function decryptSync(encrypted: string): string {
+  if (typeof window === 'undefined' || !window.crypto) {
+    return encrypted;
+  }
+  if (window.crypto.subtle.importKeySync) {
+    try {
+      const combined = new Uint8Array(Array.from(atob(encrypted), c => c.charCodeAt(0)));
+      const iv = combined.slice(0, 12);
+      const data = combined.slice(12);
+      const key = window.crypto.subtle.importKeySync("raw", new TextEncoder().encode(ENCRYPTION_KEY), { name: "AES-GCM" }, false, ["decrypt"]);
+      const plaintext = window.crypto.subtle.decryptSync({ name: "AES-GCM", iv }, key, data);
+      return new TextEncoder().decode(plaintext);
+    } catch {
+      return encrypted;
+    }
+  }
+  return ""; // Fallback for environments without sync API
 }
 
 function validateSaveState(state: unknown): state is any {
