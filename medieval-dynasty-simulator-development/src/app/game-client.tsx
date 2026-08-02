@@ -139,13 +139,15 @@ const sImg = (t: SType, h: boolean) => h ? "/images/hamlet-map.jpg" : t === "cit
 const sArt = (t: SType, h: boolean) => h ? 760 : t === "city" ? 1150 : t === "town" ? 900 : t === "village" ? 660 : 520;
 const chron = (y: number, s: Season, t: string, tx: string, tone: string): ChronEntry => ({ id: uid("c"), year: y, season: s, title: t, text: tx, tone });
 
-/* ───────── world gen ───────── */
-function genWorld() {
-  const regions: Region[] = ["Northern Marches", "Heartlands", "Western Highlands", "Eastern Coast", "Southern Wilds"];
+/* ───────── world gen ───────── */function genWorld(cd?: CharData) {
+  const regions: Region[] = ["Northern Marches","Heartlands","Western Highlands","Eastern Coast","Southern Wilds"];
   const houses = ["Veyne","Corwall","Dunmere","Ashford","Saltwyn","Grimhart","Elderbrook","Kestrel","Marrow","Brightmere"];
   const ambitions = ["a marriage pact","the disputed toll roads","royal favor","expanded mines","a rival claimant","eastern trade","an ancient shrine"];
   const banners = ["⚜","🛡","☾","♜","✦","⚔","🦌","🦅","🐺","⚓"];
   const mottos = ["Stone remembers","By river and crown","No winter breaks us","Trade is blood","The old roots endure"];
+  const playerHouse = cd?.houseName ? `House ${cd.houseName}` : "House Sheatsley";
+  const playerBanner = cd?.banner ? { Lion: "🦁", Eagle: "🦅", Oak: "🌳", Wolf: "🐺", Crown: "♚" }[cd.banner] : "♜";
+  const playerMotto = cd?.region ? REGION_RES[cd.region].motto : "From quiet roots, lasting shade";
   const baronies: Barony[] = [];
   const settlements: Settlement[] = [];
   let si = 0;
@@ -163,9 +165,9 @@ function genWorld() {
     baronies.push({
       id: `b-${i}`,
       name: isP ? "Hearthmere Barony" : `${region.split(" ")[0]} ${i % 2 ? "Cross" : "Hold"} ${i + 1}`,
-      house: isP ? "House Sheatsley" : `House ${houses[i % 10]}`,
-      region, banner: isP ? "♜" : banners[i % 10],
-      motto: isP ? "From quiet roots, lasting shade" : mottos[i % 5],
+      house: isP ? playerHouse : `House ${houses[i % 10]}`,
+      region, banner: isP ? playerBanner : banners[i % 10],
+      motto: isP ? playerMotto : mottos[i % 5],
       eco: 35 + (i * 11) % 55, mil: 20 + (i * 17) % 70, dip: 25 + (i * 13) % 60,
       rel: isP ? 100 : i % 7 === 0 ? -12 : 8 + i % 18,
       ambition: ambitions[i % 7], x, y, color: RCOL[region],
@@ -218,20 +220,49 @@ function genCitizens(settlements: Settlement[]): Citizen[] {
   return out;
 }
 
-function initGame(): GS {
-  const { baronies, settlements } = genWorld();
+type CharData = { region: RegionChoice; gender: GenderChoice; firstName: string; houseName: string; banner: BannerChoice };
+
+const REGION_RES: Record<RegionChoice, Partial<Res> & { motto: string; difficulty: number }> = {
+  "Forest Valley":     { food: 60, wood: 110, stone: 14, iron: 4, fish: 6, wool: 8, herbs: 28, leather: 16, motto: "Deep roots, strong timber", difficulty: 1 },
+  "Golden Plains":     { food: 120, wood: 48, stone: 18, iron: 6, fish: 4, wool: 20, herbs: 8, leather: 8, silver: 45, motto: "From golden fields, abundance", difficulty: 1 },
+  "Mountain Highlands":{ food: 40, wood: 56, stone: 40, iron: 22, coal: 6, wool: 6, herbs: 6, leather: 8, motto: "Stone endures, iron conquers", difficulty: 2 },
+  "Coastal Bay":       { food: 54, wood: 60, stone: 18, iron: 6, fish: 28, wool: 10, herbs: 12, leather: 6, silver: 30, motto: "Tides bring fortune", difficulty: 1.5 },
+  "River Kingdom":     { food: 96, wood: 66, stone: 20, iron: 6, fish: 16, wool: 14, herbs: 14, leather: 10, silver: 20, motto: "The river provides, the river protects", difficulty: 1.5 },
+};
+
+function initGame(cd?: CharData): GS {
+  const { baronies, settlements } = genWorld(cd);
   const home = settlements.find(s => s.home)!;
-  const ruler: Family = { id: "landon", name: "Landon Sheatsley", age: 40, role: "Chief of Hearthmere", path: "Forest & Beast", traits: ["orphaned", "patient", "woods-wise"], status: "Living" };
+  const regionChoice = cd?.region ?? "Golden Plains";
+  const rc = REGION_RES[regionChoice];
+  const houseName = cd?.houseName ?? "Sheatsley";
+  const firstName = cd?.firstName ?? "Landon";
+  const gender = cd?.gender ?? "male";
+  const title = gender === "female" ? "Chieftess" : "Chief";
+  const bannerIcon = cd?.banner ? { Lion: "🦁", Eagle: "🦅", Oak: "🌳", Wolf: "🐺", Crown: "♚" }[cd.banner] : "♜";
+
+  // Place home in chosen region
+  const regionPos = { "Forest Valley": { x: 3500, y: 5000 }, "Golden Plains": { x: 7500, y: 5500 }, "Mountain Highlands": { x: 6500, y: 1800 }, "Coastal Bay": { x: 12000, y: 4800 }, "River Kingdom": { x: 2500, y: 7200 } }[regionChoice];
+  const pos = regionPos;
+
+  const ruler: Family = { id: "ruler", name: `${firstName} ${houseName}`, age: 40, role: `${title} of Hearthmere`, path: "Forest & Beast", traits: ["orphaned", "patient", "woods-wise"], status: "Living" };
+
+  // Scale resources by difficulty (harder = fewer starting resources)
+  const diffScale = 1 / rc.difficulty;
+  const baseRes: Res = { food: 86, wood: 72, stone: 22, iron: 8, coal: 0, fish: 10, wool: 14, leather: 12, herbs: 16, tools: 7, weapons: 3, medicine: 2, silver: 35 };
+  const merged = { ...baseRes } as Res;
+  for (const k of Object.keys(rc) as RN[]) merged[k] = Math.round((rc[k as keyof typeof rc] as number ?? baseRes[k]) * diffScale);
+
   return {
-    day: 1, year: 1, season: "Spring", ruler, motto: "From quiet roots, lasting shade", rank: "Hamlet", prestige: 4,
+    day: 1, year: 1, season: "Spring", ruler, motto: rc.motto, rank: "Hamlet", prestige: 4,
     pop: 74, popCap: 130,
-    res: { food: 86, wood: 72, stone: 22, iron: 8, coal: 0, fish: 10, wool: 14, leather: 12, herbs: 16, tools: 7, weapons: 3, medicine: 2, silver: 35 },
+    res: merged,
     rate: { food: -5, wood: 10, stone: 0, iron: 0, tools: 0, weapons: 0, silver: 1 }, rep: { trust: 48, respect: 32, fear: 5, prosperity: 28, tradition: 42 },
     family: [ruler, { id: "mentor", name: "Old Mara Wold", age: 71, role: "Mentor", path: "Scholar", traits: ["stern", "beloved"], status: "Living" }],
     citizens: genCitizens(settlements),
     buildings: [{ ...BUILDS[0], level: 1 }, { ...BUILDS[1], level: 1 }, { ...BUILDS[7], level: 1 }],
     baronies, settlements,
-    chronicle: [chron(1, "Spring", "The Chronicle Opens", "Landon Sheatsley accepted the burden of Hearthmere. The first page of House Sheatsley was written.", "hope")],
+    chronicle: [chron(1, "Spring", "The Chronicle Opens", `${firstName} ${houseName} accepted the burden of Hearthmere. The first page of House ${houseName} was written.`, "hope")],
     selBid: home.bid, selSid: home.id, selCid: null, evt: null,
     toast: { title: "A New Chief Rises", body: "Press ▶ to let time flow across the Realm.", portrait: PORTRAITS.ruler },
     prices: { food: 2, wood: 3, stone: 4, iron: 8, coal: 6, fish: 3, wool: 4, leather: 6, herbs: 5, tools: 10, weapons: 15, medicine: 18, silver: 1 },
@@ -256,7 +287,7 @@ const demotionThreshold = (rank: string) => ({ "King of the Realm": 1500, "Regio
 
 /* ───────── component ───────── */
 export function GameClient({ charData, onEnding, onSave }: { charData?: { region: RegionChoice; gender: GenderChoice; firstName: string; houseName: string; banner: BannerChoice }; onEnding?: (data: EndingData) => void; onSave?: () => void }) {
-  const [g, setG] = useState<GS>(initGame);
+  const [g, setG] = useState<GS>(() => initGame(charData));
   const [mapReady, setMapReady] = useState(false);
   const [panel, setPanel] = useState<Panel>(null);
   const [speed, setSpeed] = useState(0);
@@ -370,7 +401,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
             const rr = family.find(m => m.id === ruler.id);
             if (rr?.status === "Dead") {
               const cand = family.filter(m => m.status === "Living" && m.id !== "mentor").sort((a, b) => b.age - a.age)[0];
-              if (cand) { ruler = { ...cand, role: "Chief of Hearthmere" }; family = family.map(m => m.id === cand.id ? ruler : m); extra.unshift(chron(year, season, `${cand.name} Takes the Seat`, `${cand.name} rose to lead House Sheatsley.`, "glory")); toast = { title: "A New Chief", body: `${cand.name} now leads the House.`, portrait: portrait(cand, 0) }; }
+              if (cand) { ruler = { ...cand, role: "Chief of Hearthmere" }; family = family.map(m => m.id === cand.id ? ruler : m); const ph = prev.baronies[0]?.house ?? "House Sheatsley"; extra.unshift(chron(year, season, `${cand.name} Takes the Seat`, `${cand.name} rose to lead ${ph}.`, "glory")); toast = { title: "A New Chief", body: `${cand.name} now leads the House.`, portrait: portrait(cand, 0) }; }
             } else ruler = family.find(m => m.id === ruler.id) ?? ruler;
             prestige += 1;
           }
@@ -507,7 +538,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
         if (Math.random() < 0.015 * step) {
           const aggressor = baronies[Math.floor(Math.random() * baronies.length)];
           const target = baronies.filter(b => b.id !== aggressor.id && Math.hypot(b.x - aggressor.x, b.y - aggressor.y) < 2500)[0];
-          if (target && aggressor.house !== "House Sheatsley") {
+          if (target && aggressor.id !== prev.baronies[0]?.id) {
             const outcome = Math.random();
             if (outcome < 0.4) {
               baronies = baronies.map(b => b.id === target.id ? { ...b, mil: cl01(b.mil - 15), eco: cl01(b.eco - 10), rel: cl(b.rel - 10, -100, 100) } : b);
@@ -650,7 +681,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   }); };
 
   const dipAction = (kind: "negotiate" | "alliance" | "bloc" | "peace") => { setConfirmReset(false); setG(p => {
-    if (selB.house === "House Sheatsley") { setNotice("You cannot treat with yourself."); return p; }
+    if (selB.id === p.baronies[0]?.id) { setNotice("You cannot treat with yourself."); return p; }
     const t = p.baronies.find(b => b.id === selB.id); if (!t) return p;
     if (kind === "peace") { setNotice(`Peace made with ${t.house}.`); return { ...p, atWar: p.atWar.filter(id => id !== t.id), baronies: p.baronies.map(b => b.id === t.id ? { ...b, rel: cl(b.rel + 15, -100, 100) } : b) }; }
     if (kind === "negotiate") { if (p.res.silver < 10) { setNotice("Envoys need 10 silver."); return p; } setNotice(`Relations improved with ${t.house}.`); return { ...p, res: chRes(p.res, { silver: -10 }), baronies: p.baronies.map(b => b.id === t.id ? { ...b, rel: cl(b.rel + 12, -100, 100) } : b) }; }
@@ -658,7 +689,9 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
     if (t.rel < need || p.res.silver < cost) { setNotice(`${t.house} requires ${need} relations and ${cost} silver.`); return p; }
     const ak: Alliance["kind"] = kind === "bloc" ? "trade bloc" : "alliance";
     setNotice(`${t.house} joined your ${ak}.`);
-    return { ...p, res: chRes(p.res, { silver: -cost }), alliances: [...p.alliances.filter(a => a.bid !== t.id), { bid: t.id, kind: ak }], prestige: p.prestige + (kind === "bloc" ? 6 : 4), chronicle: [chron(p.year, p.season, `${ak === "trade bloc" ? "Trade Bloc" : "Alliance"} Formed`, `${t.house} bound itself to House Sheatsley.`, "glory"), ...p.chronicle] };
+    const playerHouse = p.baronies[0]?.house ?? "House Sheatsley";
+    setNotice(`${t.house} joined your ${ak}.`);
+    return { ...p, res: chRes(p.res, { silver: -cost }), alliances: [...p.alliances.filter(a => a.bid !== t.id), { bid: t.id, kind: ak }], prestige: p.prestige + (kind === "bloc" ? 6 : 4), chronicle: [chron(p.year, p.season, `${ak === "trade bloc" ? "Trade Bloc" : "Alliance"} Formed`, `${t.house} bound itself to ${playerHouse}.`, "glory"), ...p.chronicle] };
   }); };
 
   const recruit = (u: UnitType) => {
@@ -667,11 +700,11 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
     setG(p => { if (!afford(p.res, costs[u])) { setNotice("Insufficient supplies."); return p; } setNotice(`Five ${u} joined the levy.`); return { ...p, res: chRes(p.res, Object.fromEntries(Object.entries(costs[u]).map(([k, v]) => [k, -(v ?? 0)])) as Partial<Res>), army: { ...p.army, [u]: p.army[u] + 5, training: cl01(p.army.training + 1) } }; });
   };
   const assignCpt = () => { setConfirmReset(false); setG(p => { const c = p.citizens.find(c2 => !p.army.captains.includes(c2.name)); if (!c) { setNotice("No free citizens to promote as captain."); return p; } setNotice(`${c.name} raised as captain.`); return { ...p, army: { ...p.army, captains: [...p.army.captains, c.name], training: cl01(p.army.training + 5) } }; }); };
-  const raid = () => { setConfirmReset(false); setG(p => { if (selB.house === "House Sheatsley" || p.army.militia < 5) { setNotice("Need a foreign target and at least 5 militia."); return p; } const loot = 8 + Math.round(p.army.training / 8); setNotice(`Raided ${selB.house} for ${loot} silver.`); return { ...p, res: chRes(p.res, { silver: loot, food: 4 }), atWar: p.atWar.includes(selB.id) ? p.atWar : [...p.atWar, selB.id], baronies: p.baronies.map(b => b.id === selB.id ? { ...b, rel: cl(b.rel - 18, -100, 100) } : b), rep: { ...p.rep, fear: cl01(p.rep.fear + 5), trust: cl01(p.rep.trust - 2) }, chronicle: [chron(p.year, p.season, "Caravan Raided", `Sheatsley riders raided ${selB.house}.`, "warning"), ...p.chronicle] }; }); };
+  const raid = () => { setConfirmReset(false); setG(p => { const ph = p.baronies[0]?.house ?? "House Sheatsley"; if (selB.id === p.baronies[0]?.id || p.army.militia < 5) { setNotice("Need a foreign target and at least 5 militia."); return p; } const loot = 8 + Math.round(p.army.training / 8); setNotice(`Raided ${selB.house} for ${loot} silver.`); return { ...p, res: chRes(p.res, { silver: loot, food: 4 }), atWar: p.atWar.includes(selB.id) ? p.atWar : [...p.atWar, selB.id], baronies: p.baronies.map(b => b.id === selB.id ? { ...b, rel: cl(b.rel - 18, -100, 100) } : b), rep: { ...p.rep, fear: cl01(p.rep.fear + 5), trust: cl01(p.rep.trust - 2) }, chronicle: [chron(p.year, p.season, "Caravan Raided", `${ph.split(" ")[1]} riders raided ${selB.house}.`, "warning"), ...p.chronicle] }; }); };
 
   const startBattle = (kind: "attack" | "siege") => {
     setConfirmReset(false);
-    if (selB.house === "House Sheatsley") { setNotice("Select a foreign barony on the map first."); return; }
+    if (selB.id === g.baronies[0]?.id) { setNotice("Select a foreign barony on the map first."); return; }
     const total = g.army.militia + g.army.archers + g.army.spearmen + g.army.knights;
     if (total < 4) { setNotice("Raise more soldiers before marching."); return; }
     setSpeed(0);
@@ -736,7 +769,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
     const d = await r.json() as { save?: { payload?: GS } | null };
     if (d.save?.payload?.prices && d.save.payload.army && typeof d.save.payload.day === "number") { setG(d.save.payload); setNotice("Chronicle loaded."); } else setNotice("No compatible save found.");
   };
-  const reset = () => { if (!confirmReset) { setConfirmReset(true); setNotice("Click reset again to confirm — this opens a blank Chronicle and discards the current one."); return; } const ng = initGame(); setG(ng); setPanel(null); setSpeed(0); setConfirmReset(false); const h = ng.settlements.find(s => s.home)!; center(h.x, h.y, 0.55); setNotice("A new blank Chronicle has opened."); };
+  const reset = () => { if (!confirmReset) { setConfirmReset(true); setNotice("Click reset again to confirm — this opens a blank Chronicle and discards the current one."); return; } const ng = initGame(charData); setG(ng); setPanel(null); setSpeed(0); setConfirmReset(false); const h = ng.settlements.find(s => s.home)!; center(h.x, h.y, 0.55); setNotice("A new blank Chronicle has opened."); };
 
   // auto-dismiss toast after 6 seconds
   useEffect(() => {
@@ -979,7 +1012,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
         <button data-ui="1" onClick={() => toggle("House")} className="ck-panel pointer-events-auto flex items-center gap-3 rounded-2xl py-2 pl-2 pr-5 transition hover:brightness-110">
           <span className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-[#a43a39] to-[#4b1219] text-lg ring-1 ring-[#c8a84e]/40">♜</span>
           <span className="text-left">
-            <span className="block text-[8px] uppercase tracking-[0.35em] text-[#c8a84e]">House Sheatsley</span>
+            <span className="block text-[8px] uppercase tracking-[0.35em] text-[#c8a84e]">House {charData?.houseName ?? "Sheatsley"}</span>
             <span className="block text-[13px] font-semibold leading-tight">{g.rank} of Hearthmere</span>
             <span className="block text-[10px] text-[#8d8674]">Prestige {g.prestige} · {renown(g.rep.respect)}</span>
           </span>
@@ -1068,11 +1101,11 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
       {panel && (
         <div data-ui="1" className="drawer absolute bottom-[74px] left-1/2 z-40 max-h-[58vh] w-[min(1020px,calc(100vw-250px))] -translate-x-1/2 overflow-auto rounded-3xl border border-white/8 bg-[#0e0d0b]/95 p-6 shadow-[0_24px_80px_rgba(0,0,0,.65)] backdrop-blur-2xl">
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-[15px] font-semibold tracking-wide text-[#c8a84e]">{panel === "House" ? "House Sheatsley" : panel === "Trade" ? "Trade & Alliances" : panel === "Realm" ? "Realm Directory" : panel}</h2>
+            <h2 className="text-[15px] font-semibold tracking-wide text-[#c8a84e]">{panel === "House" ? `House ${charData?.houseName ?? "Sheatsley"}` : panel === "Trade" ? "Trade & Alliances" : panel === "Realm" ? "Realm Directory" : panel}</h2>
             <button onClick={() => setPanel(null)} className="rounded-full bg-white/6 px-3 py-1 text-[11px] hover:bg-white/12">✕</button>
           </div>
 
-          {panel === "House" && <HousePanel g={g} living={living} center={center} home={home} setPanel={setPanel} />}
+          {panel === "House" && <HousePanel g={g} living={living} center={center} home={home} setPanel={setPanel} houseName={charData?.houseName ?? "Sheatsley"} bannerIcon={charData?.banner ? { Lion: "🦁", Eagle: "🦅", Oak: "🌳", Wolf: "🐺", Crown: "♚" }[charData.banner] : "♜"} />}
           {panel === "Family" && <div className="flex gap-3 overflow-x-auto pb-2">{g.family.map((m, i) => <div key={m.id} className={`w-32 shrink-0 rounded-2xl border p-3 text-center ${m.status === "Dead" ? "border-white/5 opacity-50" : "border-white/8 bg-white/3"}`}><img src={portrait(m, i)} alt={m.name} className="mx-auto h-16 w-14 rounded-lg object-cover" onError={(e) => { (e.target as HTMLImageElement).src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='64'%3E%3Crect fill='%233a2a1a' width='56' height='64' rx='8'/%3E%3Ctext x='28' y='42' text-anchor='middle' fill='%23c8a84e' font-size='24' font-family='sans-serif'%3E${encodeURIComponent(m.name.split(" ")[0][0])}%3C/text%3E%3C/svg%3E`; }} /><p className="mt-1 text-[12px] font-semibold">{m.name}</p><p className="text-[10px] text-[#bbb5a0]">{m.role}</p><p className="text-[10px] text-[#c8a84e]">{m.status === "Dead" ? "Deceased" : `Age ${m.age}`}</p></div>)}<div className="flex w-32 shrink-0 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 text-[11px] text-[#8d8674]"><span className="text-xl">?</span>continues…</div></div>}
           {panel === "Citizens" && <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{g.citizens.filter(c => c.sid === home.id).map(c => { const st = OCC_STYLE[c.occ]; return <button key={c.id} onClick={() => { pickC(c); center(home.x, home.y, 1.3); }} className="flex items-center gap-2 rounded-xl bg-white/3 px-3 py-2 text-left transition hover:bg-white/7"><span className="grid h-7 w-7 place-items-center rounded-full text-[11px]" style={{ background: st?.tunic }}>{st?.tool}</span><span><span className="block text-[12px] font-medium">{c.name}</span><span className="text-[10px] text-[#bbb5a0]">{c.occ} · {c.age}</span></span></button>; })}</div>}
           {panel === "Alerts" && <div className="grid gap-6 md:grid-cols-2"><div><h3 className="mb-2 text-[11px] uppercase tracking-wider text-[#c8a84e]">Alerts</h3><ul className="space-y-1 text-[12px]">{alerts.map(a => <li key={a} className="rounded-xl bg-white/3 px-3 py-2">• {a}</li>)}</ul></div><div><h3 className="mb-2 text-[11px] uppercase tracking-wider text-[#c8a84e]">Recent</h3><ul className="space-y-1 text-[12px]">{g.chronicle.slice(0, 7).map(e => <li key={e.id} className="rounded-xl bg-white/3 px-3 py-2"><strong className="text-[#c8a84e]">{e.title}</strong> <span className="text-[#bbb5a0]">{e.text}</span></li>)}</ul></div></div>}
@@ -1129,11 +1162,11 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
 }
 
 /* ───────── panels ───────── */
-function HousePanel({ g, living, center, home, setPanel }: { g: GS; living: Family[]; center: (x: number, y: number, z?: number) => void; home: Settlement; setPanel: (p: Panel) => void }) {
+function HousePanel({ g, living, center, home, setPanel, houseName, bannerIcon }: { g: GS; living: Family[]; center: (x: number, y: number, z?: number) => void; home: Settlement; setPanel: (p: Panel) => void; houseName: string; bannerIcon: string }) {
   return (
     <div className="grid gap-6 md:grid-cols-[290px_1fr]">
       <div className="space-y-4">
-        <div className="flex items-center gap-3"><span className="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-[#a43a39] to-[#4b1219] text-2xl ring-2 ring-[#c8a84e]/30">♜</span><div><h3 className="text-[15px] font-bold">House Sheatsley</h3><p className="text-[11px] italic text-[#c8a84e]">&ldquo;{g.motto}&rdquo;</p></div></div>
+        <div className="flex items-center gap-3"><span className="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-[#a43a39] to-[#4b1219] text-2xl ring-2 ring-[#c8a84e]/30">{bannerIcon}</span><div><h3 className="text-[15px] font-bold">House {houseName}</h3><p className="text-[11px] italic text-[#c8a84e]">&ldquo;{g.motto}&rdquo;</p></div></div>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[12px]">
           <p><span className="text-[#8d8674]">Ruler</span> {g.ruler.name}</p><p><span className="text-[#8d8674]">Age</span> {living.find(m => m.id === g.ruler.id)?.age ?? g.ruler.age}</p>
           <p><span className="text-[#8d8674]">Rank</span> {g.rank}</p><p><span className="text-[#8d8674]">Prestige</span> {g.prestige}</p>
@@ -1280,9 +1313,9 @@ function BarPanel({ b, g, center, pickS, setPanel }: { b: Barony; g: GS; center:
         <p className="mt-2 text-[12px] italic text-[#8d8674]">&ldquo;{b.motto}&rdquo;</p>
         <p className="mt-1 text-[12px]">{b.region} · seeks {b.ambition}</p>
         {allied && <p className="mt-1 text-[11px] font-semibold text-emerald-400">Bound to you by {allied.kind}</p>}
-        {g.atWar.includes(b.id) && <p className="mt-1 text-[11px] font-semibold text-red-400">At war with House Sheatsley</p>}
+        {g.atWar.includes(b.id) && <p className="mt-1 text-[11px] font-semibold text-red-400">At war with {g.baronies[0]?.house ?? "your house"}</p>}
         <Meter l="Economy" v={b.eco} /><Meter l="Military" v={b.mil} /><Meter l="Diplomacy" v={b.dip} /><Meter l="Relations" v={b.rel + 50} />
-        {b.house !== "House Sheatsley" && (
+        {b.id !== g.baronies[0]?.id && (
           <div className="mt-3 flex gap-1.5">
             <button onClick={() => setPanel("Trade")} className="flex-1 rounded-lg bg-[#c8a84e] py-2 text-[11px] font-semibold text-[#1a1611]">Diplomacy & trade</button>
             <button onClick={() => setPanel("War")} className="flex-1 rounded-lg bg-red-900/60 py-2 text-[11px] font-semibold text-red-100">War council</button>
@@ -1363,7 +1396,7 @@ function CrownPanel({ g, grantTitle, resolveCrisis, recruitRoyalGuard }: { g: GS
           <select onChange={e => { if (e.target.value) grantTitle(e.target.value); e.target.value = ""; }}
             className="rounded-lg border border-white/8 bg-white/4 px-2 py-1 text-[10px] outline-none">
             <option value="">Grant title (15 prestige)…</option>
-            {g.baronies.filter(b => b.house !== "House Sheatsley" && !g.vassals.some(v => v.bid === b.id)).slice(0, 20).map(b => (
+            {g.baronies.filter(b => b.id !== g.baronies[0]?.id && !g.vassals.some(v => v.bid === b.id)).slice(0, 20).map(b => (
               <option key={b.id} value={b.id}>{b.house} · relations {b.rel}</option>
             ))}
           </select>

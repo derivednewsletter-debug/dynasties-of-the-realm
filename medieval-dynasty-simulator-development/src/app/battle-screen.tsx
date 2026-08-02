@@ -313,7 +313,7 @@ export function BattleScreen({ setup, onEnd }: { setup: BattleSetup; onEnd: (o: 
       <div className="flex items-center justify-between gap-4 px-6 py-3">
         <div>
           <p className="text-[10px] uppercase tracking-[0.3em] text-red-300">{setup.kind === "siege" ? "Siege Assault" : "Field Battle"} · {Math.floor(elapsed)}s</p>
-          <h2 className="text-xl font-bold text-[#eee4d0]">House Sheatsley vs {setup.enemyHouse}</h2>
+          <h2 className="text-xl font-bold text-[#eee4d0]">Your Host vs {setup.enemyHouse}</h2>
         </div>
         <div className="flex flex-1 items-center gap-4 px-6">
           <div className="flex-1">
