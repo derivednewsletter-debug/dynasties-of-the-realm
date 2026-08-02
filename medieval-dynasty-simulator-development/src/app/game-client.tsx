@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BattleScreen, type BattleSetup, type BattleOutcome, type UnitType } from "./battle-screen";
+import { AuthModal, useAuth } from "@/components/auth-modal";
 
 /* ───────── types ───────── */
 type Season = "Spring" | "Summer" | "Autumn" | "Winter";
@@ -250,6 +251,9 @@ export function GameClient() {
   const [cTone, setCTone] = useState<"all" | ChronEntry["tone"]>("all");
   const [cTab, setCTab] = useState<"Info" | "Skills" | "Memories">("Info");
   const [confirmReset, setConfirmReset] = useState(false);
+
+  // Auth
+  const auth = useAuth();
   const [cam, setCam] = useState({ x: 0, y: 0, z: 0.35 });
   const [vp, setVp] = useState({ w: 1280, h: 800 });
   const [hover, setHover] = useState<{ x: number; y: number; label: string; sub: string } | null>(null);
@@ -457,8 +461,20 @@ export function GameClient() {
     });
   }, [selB]);
 
-  const saveGame = async () => { setConfirmReset(false); setNotice("Saving…"); const r = await fetch("/api/game", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slot: "autosave", houseName: "Sheatsley", rulerName: g.ruler.name, state: g }) }); setNotice(r.ok ? "Saved to the realm archive." : "Save failed."); };
-  const loadGame = async () => { const r = await fetch("/api/game?slot=autosave"); if (!r.ok) { setNotice("Archive unreachable."); return; } const d = await r.json() as { save?: { payload?: GS } | null }; if (d.save?.payload?.prices && d.save.payload.army && typeof d.save.payload.day === "number") { setG(d.save.payload); setNotice("Chronicle loaded."); } else setNotice("No compatible save found."); };
+  const saveGame = async () => {
+    setConfirmReset(false);
+    if (!auth.user) { setNotice("Sign in to save your dynasty to the cloud."); auth.setShowAuth(true); return; }
+    setNotice("Saving…");
+    const r = await fetch("/api/game", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slot: "autosave", houseName: "Sheatsley", rulerName: g.ruler.name, state: g }) });
+    setNotice(r.ok ? "Saved to the realm archive." : "Save failed.");
+  };
+  const loadGame = async () => {
+    if (!auth.user) { setNotice("Sign in to load your cloud save."); auth.setShowAuth(true); return; }
+    const r = await fetch("/api/game?slot=autosave");
+    if (!r.ok) { setNotice(r.status === 401 ? "Sign in to access cloud saves." : "Archive unreachable."); return; }
+    const d = await r.json() as { save?: { payload?: GS } | null };
+    if (d.save?.payload?.prices && d.save.payload.army && typeof d.save.payload.day === "number") { setG(d.save.payload); setNotice("Chronicle loaded."); } else setNotice("No compatible save found.");
+  };
   const reset = () => { if (!confirmReset) { setConfirmReset(true); setNotice("Click reset again to confirm — this opens a blank Chronicle and discards the current one."); return; } const ng = initGame(); setG(ng); setPanel(null); setSpeed(0); setConfirmReset(false); const h = ng.settlements.find(s => s.home)!; center(h.x, h.y, 0.55); setNotice("A new blank Chronicle has opened."); };
 
   // auto-dismiss toast after 6 seconds
@@ -702,9 +718,12 @@ export function GameClient() {
 
         <div data-ui="1" className="pointer-events-auto flex flex-col gap-1">
           <div className="flex gap-1">
-            <button onClick={saveGame} className="rounded-lg bg-emerald-950/70 px-3 py-1.5 text-[10px] font-semibold text-emerald-200 ring-1 ring-emerald-400/20 hover:bg-emerald-900/70">Save</button>
+            <button onClick={saveGame} className="rounded-lg bg-emerald-950/70 px-3 py-1.5 text-[10px] font-semibold text-emerald-200 ring-1 ring-emerald-400/20 hover:bg-emerald-900/70">{auth.user ? "☁ Save" : "Save"}</button>
             <button onClick={loadGame} className="rounded-lg bg-sky-950/70 px-3 py-1.5 text-[10px] font-semibold text-sky-200 ring-1 ring-sky-400/20 hover:bg-sky-900/70">Load</button>
             <button onClick={reset} className="rounded-lg bg-red-950/70 px-3 py-1.5 text-[10px] font-semibold text-red-200 ring-1 ring-red-400/20 hover:bg-red-900/70">New</button>
+            {auth.user
+              ? <button onClick={auth.logout} title={auth.user.email} className="rounded-lg bg-white/6 px-3 py-1.5 text-[10px] font-semibold text-[#eee4d0] hover:bg-white/12">👤 Sign out</button>
+              : <button onClick={() => auth.setShowAuth(true)} className="rounded-lg bg-[#c8a84e]/20 px-3 py-1.5 text-[10px] font-semibold text-[#c8a84e] ring-1 ring-[#c8a84e]/30 hover:bg-[#c8a84e]/30">Sign in</button>}
           </div>
           <button onClick={() => toggle("Realm")} className="rounded-lg bg-white/6 px-3 py-1.5 text-[10px] font-semibold hover:bg-white/12">🗺 Realm Directory</button>
         </div>
@@ -788,6 +807,22 @@ export function GameClient() {
 
       {/* ════ REAL-TIME BATTLE ════ */}
       {battleSetup && <BattleScreen setup={battleSetup} onEnd={endBattle} />}
+
+      {/* ════ AUTH MODAL ════ */}
+      <AuthModal
+        show={auth.showAuth}
+        onClose={() => auth.setShowAuth(false)}
+        email={auth.email}
+        setEmail={auth.setEmail}
+        password={auth.password}
+        setPassword={auth.setPassword}
+        mode={auth.mode}
+        setMode={auth.setMode}
+        error={auth.error}
+        setError={auth.setError}
+        busy={auth.busy}
+        submit={auth.submit}
+      />
     </main>
   );
 }

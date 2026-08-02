@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { dynastySaves } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { createClient } from "@/lib/supabase/server";
+import { and, eq, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -17,24 +18,32 @@ async function ensureSaveTable() {
   await db.execute(sql`
     create table if not exists dynasty_saves (
       id uuid primary key default gen_random_uuid(),
-      slot text not null unique,
+      slot text not null,
+      user_id uuid references auth.users(id) on delete cascade,
       house_name text not null,
       ruler_name text not null,
       payload jsonb not null,
-      updated_at timestamptz not null default now()
+      updated_at timestamptz not null default now(),
+      unique(slot, user_id)
     )
   `);
 }
 
 export async function GET(request: NextRequest) {
   if (!db) return Response.json({ ok: false, error: "No database configured" }, { status: 500 });
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return Response.json({ ok: false, error: "Not authenticated" }, { status: 401 });
+
   try {
     await ensureSaveTable();
     const slot = request.nextUrl.searchParams.get("slot") ?? "autosave";
+
     const rows = await db
       .select({ payload: dynastySaves.payload, updatedAt: dynastySaves.updatedAt })
       .from(dynastySaves)
-      .where(eq(dynastySaves.slot, slot))
+      .where(and(eq(dynastySaves.slot, slot), eq(dynastySaves.userId, user.id)))
       .limit(1);
 
     if (rows.length === 0) {
@@ -52,6 +61,11 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   if (!db) return Response.json({ ok: false, error: "No database configured" }, { status: 500 });
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return Response.json({ ok: false, error: "Not authenticated" }, { status: 401 });
+
   try {
     await ensureSaveTable();
     const body = (await request.json()) as SavePayload;
@@ -62,9 +76,9 @@ export async function POST(request: NextRequest) {
 
     await db
       .insert(dynastySaves)
-      .values({ slot, houseName, rulerName, payload: state })
+      .values({ slot, userId: user.id, houseName, rulerName, payload: state })
       .onConflictDoUpdate({
-        target: dynastySaves.slot,
+        target: [dynastySaves.slot, dynastySaves.userId],
         set: {
           houseName,
           rulerName,
