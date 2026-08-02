@@ -39,10 +39,5 @@ async function ensureDb(): Promise<NodePgDatabase | null> {
   }
 }
 
-// Synchronous getter for backward compatibility — returns null if not yet initialized
-export function getDb(): NodePgDatabase | null {
-  return _db;
-}
-
 // Async initializer — call this in server components/API routes
 export { ensureDb };
