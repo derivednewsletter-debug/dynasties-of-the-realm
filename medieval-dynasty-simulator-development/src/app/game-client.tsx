@@ -193,7 +193,7 @@ const cl01 = clamp01; // Backward compatibility for existing code
 // Encryption utilities for secure localStorage
 const ENCRYPTION_KEY = "dynasty-game-encryption-key-v1.2";
 
-function encrypt(text: string): string {
+async function encrypt(text: string): Promise<string> {
   if (typeof window === 'undefined' || !window.crypto) {
     return text; // Node.js or no crypto environment
   }
@@ -211,7 +211,7 @@ function encrypt(text: string): string {
   }
 }
 
-function decrypt(encrypted: string): string {
+async function decrypt(encrypted: string): Promise<string> {
   if (typeof window === 'undefined' || !window.crypto) {
     return encrypted; // Node.js or no crypto environment
   }
@@ -526,41 +526,44 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
     setCam(c => { const zz = z ?? c.z; return { x: cl(wx - vp.w / (2 * zz), 0, Math.max(0, W - vp.w / zz)), y: cl(wy - vp.h / (2 * zz), 0, Math.max(0, H - vp.h / zz)), z: zz }; });
   }, [vp]);
 
-  /* persistence + viewport */
-  useEffect(() => {
-    setMapReady(true);
-    const idle = window.setTimeout(() => {
-      for (const src of [SETTLEMENT_SVGS.hamlet, SETTLEMENT_SVGS.village, SETTLEMENT_SVGS.town, SETTLEMENT_SVGS.city]) {
-        const img = new Image();
-        img.decoding = "async";
-        img.src = src;
-      }
-    }, 120);
-    return () => window.clearTimeout(idle);
-  }, []);
-  // Load from localStorage on mount, then try cloud if logged in
-  useEffect(() => {
-    try {
-      const encrypted = localStorage.getItem("dotr-v8");
-      if (encrypted) {
-        try {
-          const decrypted = decrypt(encrypted);
-          const p = JSON.parse(decrypted) as GS;
-          if (validateSaveState(p)) {
-            setG(p);
-            setNotice("Chronicle restored.");
-          } else {
-            localStorage.removeItem("dotr-v8");
-            setNotice("Old save data was invalid - starting new.");
-          }
-        } catch {
-          localStorage.removeItem("dotr-v8");
-        }
-      }
-    } catch {
-      localStorage.removeItem("dotr-v8");
-    }
-  }, []);
+   /* persistence + viewport */
+   useEffect(() => {
+     setMapReady(true);
+     const idle = window.setTimeout(() => {
+       for (const src of [SETTLEMENT_SVGS.hamlet, SETTLEMENT_SVGS.village, SETTLEMENT_SVGS.town, SETTLEMENT_SVGS.city]) {
+         const img = new Image();
+         img.decoding = "async";
+         img.src = src;
+       }
+     }, 120);
+     return () => window.clearTimeout(idle);
+   }, []);
+   // Load from localStorage on mount, then try cloud if logged in
+   useEffect(() => {
+     const loadFromLocalStorage = async () => {
+       try {
+         const encrypted = localStorage.getItem("dotr-v8");
+         if (encrypted) {
+           try {
+             const decrypted = await decrypt(encrypted);
+             const p = JSON.parse(decrypted) as GS;
+             if (validateSaveState(p)) {
+               setG(p);
+               setNotice("Chronicle restored.");
+             } else {
+               localStorage.removeItem("dotr-v8");
+               setNotice("Old save data was invalid - starting new.");
+             }
+           } catch {
+             localStorage.removeItem("dotr-v8");
+           }
+         }
+       } catch {
+         localStorage.removeItem("dotr-v8");
+       }
+     };
+     loadFromLocalStorage();
+   }, []);
   // Try loading from Supabase cloud when user logs in
   useEffect(() => {
     if (!auth.user) return;
