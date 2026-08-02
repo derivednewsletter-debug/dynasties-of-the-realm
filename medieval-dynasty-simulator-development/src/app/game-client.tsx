@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BattleScreen, type BattleSetup, type BattleOutcome, type UnitType } from "./battle-screen";
 import { AuthModal, useAuth } from "@/components/auth-modal";
 import { REALM_MAP, SETTLEMENT_SVGS, PORTRAIT_SVGS } from "@/components/game-svgs";
+import { RealmMapCanvas } from "@/components/realm-map-canvas";
 import { type RegionChoice, type BannerChoice, type GenderChoice } from "./main-menu";
 import { type EndingData } from "./ending-screen";
 
@@ -390,11 +391,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
 
   /* persistence + viewport */
   useEffect(() => {
-    const base = new Image();
-    base.decoding = "async";
-    base.onload = () => setMapReady(true);
-    base.onerror = () => setMapReady(true);
-    base.src = REALM_MAP;
+    setMapReady(true);
     const idle = window.setTimeout(() => {
       for (const src of [SETTLEMENT_SVGS.hamlet, SETTLEMENT_SVGS.village, SETTLEMENT_SVGS.town, SETTLEMENT_SVGS.city]) {
         const img = new Image();
@@ -1059,8 +1056,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       {/* ════ MAP ════ */}
       <div ref={mapRef} className={`absolute inset-0 select-none ${drag.current.on ? "cursor-grabbing" : "cursor-grab"}`} style={{ touchAction: "none" }} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel}>
         <div className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ width: W, height: H, transform: `translate(${-cam.x * cam.z}px,${-cam.y * cam.z}px) scale(${cam.z})` }}>
-          <div className="absolute inset-0" style={{ backgroundImage: `url(${REALM_MAP})`, backgroundSize: "100% 100%" }} />
-          <div className="absolute inset-0" style={{ background: "radial-gradient(circle at 50% 15%, rgba(107,156,196,.16), transparent 26%), radial-gradient(circle at 50% 50%, rgba(200,168,78,.13), transparent 26%), radial-gradient(circle at 15% 47%, rgba(138,128,120,.15), transparent 22%), radial-gradient(circle at 85% 45%, rgba(77,151,168,.15), transparent 22%), radial-gradient(circle at 50% 84%, rgba(90,154,82,.15), transparent 24%)" }} />
+          <RealmMapCanvas atWar={g.atWar} baronies={g.baronies} roads={g.roads ?? []} settlements={g.settlements} camX={cam.x} camY={cam.y} zoom={cam.z} />
 
           {/* thin barony borders */}
           <svg className="pointer-events-none absolute inset-0" width={W} height={H}>
@@ -1298,7 +1294,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       <div data-ui="1" className="absolute bottom-4 right-4 z-30 w-52 rounded-2xl border border-white/8 bg-[#0e0d0b]/88 p-2 shadow-xl backdrop-blur-xl">
         <div className="mb-1 flex justify-between px-0.5 text-[9px] uppercase tracking-wider text-[#8d8674]"><span>The Realm</span><span>{Math.round(cam.z * 100)}%</span></div>
         <div className="relative h-32 w-full cursor-crosshair overflow-hidden rounded-lg" onClick={onMini}>
-          <div className="absolute inset-0 opacity-55" style={{ backgroundImage: `url(${REALM_MAP})`, backgroundSize: "100% 100%" }} />
+          <div className="absolute inset-0 opacity-55"><RealmMapCanvas atWar={g.atWar} baronies={g.baronies} roads={g.roads ?? []} settlements={g.settlements} camX={0} camY={0} zoom={1} staticMode /></div>
           {g.baronies.map(b => <span key={b.id} className="absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full" style={{ left: `${b.x / W * 100}%`, top: `${b.y / H * 100}%`, background: g.atWar.includes(b.id) ? "#e05a4a" : g.alliances.some(a => a.bid === b.id) ? "#57c07a" : b.color }} />)}
           <span className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#c8a84e] bg-[#6b1f1f]" style={{ left: `${home.x / W * 100}%`, top: `${home.y / H * 100}%` }} />
           <div className="absolute border-2 border-[#c8a84e]/90 bg-[#c8a84e]/10" style={{ left: `${cam.x / W * 100}%`, top: `${cam.y / H * 100}%`, width: `${Math.min(100, vW / W * 100)}%`, height: `${Math.min(100, vH / H * 100)}%` }} />
