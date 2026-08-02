@@ -235,7 +235,7 @@ function drawTitleBanner(ctx: CanvasRenderingContext2D) {
   ctx.font = "13px serif";
   ctx.fillStyle = "rgba(200,168,78,0.7)";
   ctx.textAlign = "center";
-  ctx.fillText("THE REALM OF CROWNS", bx, by + 4);
+  ctx.fillText("THE REALM OF ORESTIA", bx, by + 4);
 }
 
 type Season = "Spring" | "Summer" | "Autumn" | "Winter";

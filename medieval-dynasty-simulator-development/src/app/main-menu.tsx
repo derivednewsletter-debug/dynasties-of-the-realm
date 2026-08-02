@@ -8,11 +8,11 @@ export type GenderChoice = "male" | "female";
 export type PortraitChoice = "bearded-chief" | "young-warrior" | "wise-elder" | "noble-lady" | "scarred-vet" | "mystic-seer" | "hardy-farmer" | "sea-captain";
 
 export const REGIONS: Record<RegionChoice, { color: string; difficulty: string; main: string; desc: string; x: number; y: number }> = {
-  "Forest Valley":    { color: "#4a7a3a", difficulty: "Easy",   main: "Wood & Herbs",     desc: "Deep pines shelter abundant game and timber.", x: 3500, y: 5000 },
-  "Golden Plains":    { color: "#b8a04a", difficulty: "Easy",   main: "Food & Silver",   desc: "Endless wheat fields feed the continent.", x: 7500, y: 5500 },
-  "Mountain Highlands":{color: "#7a7a7a", difficulty: "Hard",   main: "Stone & Iron",    desc: "Ancient peaks hide iron and forgotten halls.", x: 6500, y: 1800 },
-  "Coastal Bay":      { color: "#4a7a8a", difficulty: "Medium", main: "Fish & Trade",    desc: "Salt winds carry merchants from distant shores.", x: 12000, y: 4800 },
-  "River Kingdom":    { color: "#5a8a6a", difficulty: "Medium", main: "Fertile Lands",   desc: "River waters make the soil rich and dark.", x: 2500, y: 7200 },
+  "Forest Valley":    { color: "#4a7a3a", difficulty: "Easy",   main: "Wood & Herbs",     desc: "Deep pines of the Northern Marches shelter abundant game and timber.", x: 3500, y: 5000 },
+  "Golden Plains":    { color: "#b8a04a", difficulty: "Easy",   main: "Food & Silver",   desc: "The golden wheat fields of the Heartlands feed the whole continent.", x: 7500, y: 5500 },
+  "Mountain Highlands":{color: "#7a7a7a", difficulty: "Hard",   main: "Stone & Iron",    desc: "Ancient peaks of the Western Highlands hide iron and forgotten halls.", x: 6500, y: 1800 },
+  "Coastal Bay":      { color: "#4a7a8a", difficulty: "Medium", main: "Fish & Trade",    desc: "Salt winds of the Eastern Coast carry merchants from distant shores.", x: 12000, y: 4800 },
+  "River Kingdom":    { color: "#5a8a6a", difficulty: "Medium", main: "Fertile Lands",   desc: "River waters of the Heartlands make the soil rich and dark.", x: 2500, y: 7200 },
 };
 
 export const PATHS: { id: string; icon: string; label: string; desc: string }[] = [

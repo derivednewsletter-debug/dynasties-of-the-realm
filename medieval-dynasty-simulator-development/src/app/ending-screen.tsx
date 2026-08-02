@@ -10,6 +10,8 @@ export interface EndingData {
   startYear: number;
   endYear: number;
   settlements: { id: string; name: string; type: string; x: number; y: number; peakType: string }[];
+  roads: { x1: number; y1: number; x2: number; y2: number; level: number }[];
+  rulers: { name: string; year: number }[];
   peakRank: string;
   totalPrestige: number;
   battlesFought: number;
@@ -25,6 +27,7 @@ interface Props {
 export function EndingScreen({ data, onRestart }: Props) {
   const [phase, setPhase] = useState<"scroll" | "rewind" | "final">("scroll");
   const [yearPos, setYearPos] = useState(data.endYear);
+  const [paused, setPaused] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -50,7 +53,7 @@ export function EndingScreen({ data, onRestart }: Props) {
 
   // Map rewind canvas
   useEffect(() => {
-    if (phase !== "rewind") return;
+    if (phase !== "rewind" || paused) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     canvas.width = 800;
@@ -66,7 +69,7 @@ export function EndingScreen({ data, onRestart }: Props) {
     }, 50);
 
     return () => clearInterval(interval);
-  }, [phase, totalYears, data.startYear]);
+  }, [phase, paused, totalYears, data.startYear]);
 
   // Draw settlements on canvas
   useEffect(() => {
@@ -80,6 +83,19 @@ export function EndingScreen({ data, onRestart }: Props) {
     // Dark parchment background
     ctx.fillStyle = "#1a1611";
     ctx.fillRect(0, 0, w, h);
+
+    // Stone highways retract into overgrown dirt tracks as time rewinds
+    for (const r of data.roads) {
+      const ax = (r.x1 / 15000) * w, ay = (r.y1 / 10000) * h;
+      const bx = (r.x2 / 15000) * w, by = (r.y2 / 10000) * h;
+      const roadAlpha = Math.max(0, 1 - progress) * (r.level === 3 ? 0.4 : r.level === 2 ? 0.22 : 0.12);
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.strokeStyle = `rgba(180,150,100,${roadAlpha})`;
+      ctx.lineWidth = 1 + r.level * 0.5;
+      ctx.stroke();
+    }
 
     // Region labels
     const regions = [
@@ -122,6 +138,14 @@ export function EndingScreen({ data, onRestart }: Props) {
     ctx.fillStyle = "#c8a84e";
     ctx.textAlign = "center";
     ctx.fillText(`Year ${yearPos}`, w / 2, h - 30);
+
+    // Generations of rulers flash by
+    const ruler = [...data.rulers].reverse().find(r2 => r2.year <= yearPos);
+    if (ruler) {
+      ctx.font = "italic 14px serif";
+      ctx.fillStyle = "rgba(238,228,208,0.7)";
+      ctx.fillText(`House ${data.houseName} — ${ruler.name}`, w / 2, h - 56);
+    }
 
     // Progress bar
     ctx.fillStyle = "rgba(255,255,255,0.1)";
@@ -178,8 +202,33 @@ export function EndingScreen({ data, onRestart }: Props) {
       {phase === "rewind" && (
         <div className="flex h-full w-full flex-col items-center justify-center gap-4">
           <canvas ref={canvasRef} className="rounded-2xl border border-[#c8a84e]/15 shadow-2xl" />
-          <p className="text-[14px] text-[#eee4d0]">Drag the years backward...</p>
-          <p className="text-[11px] text-[#8d8674]">Watch the Realm shrink to its roots</p>
+          <div className="w-[680px] max-w-[92vw]">
+            <input
+              type="range"
+              min={data.startYear}
+              max={data.endYear}
+              step={1}
+              value={yearPos}
+              onPointerDown={() => setPaused(true)}
+              onChange={e => setYearPos(Number(e.target.value))}
+              onPointerUp={() => setPaused(false)}
+              className="w-full accent-[#c8a84e]"
+              aria-label="Drag the years backward"
+            />
+            <div className="mt-1 flex justify-between text-[10px] text-[#8d8674]">
+              <span>Year {data.startYear} · the first page</span>
+              <span>Year {data.endYear} · the last page</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <p className="text-[14px] text-[#eee4d0]">{paused ? "The hands of time pause..." : "Dragging the years backward..."}</p>
+            {paused && (
+              <button onClick={() => { setPaused(false); }} className="rounded-lg bg-[#c8a84e] px-4 py-1.5 text-[11px] font-bold text-[#1a1611] hover:brightness-110">
+                ▶ Resume the rewind
+              </button>
+            )}
+          </div>
+          <p className="text-[11px] text-[#8d8674]">Watch grand stone capitals shrink into medieval towns, and stone highways retract into overgrown dirt tracks.</p>
         </div>
       )}
     </div>

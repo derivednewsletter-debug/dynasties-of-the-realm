@@ -456,6 +456,6 @@ export const DEITY_SVGS: Record<string, string> = {
       <line x1="30" y1="30" x2="36" y2="36"/><line x1="60" y1="60" x2="66" y2="66"/>
       <line x1="30" y1="66" x2="36" y2="60"/><line x1="60" y1="36" x2="66" y2="30"/>
     </g>
-    <text x="48" y="90" text-anchor="middle" font-family="serif" font-size="10" fill="#e0a040" font-style="italic">Sol</text>
+    <text x="48" y="90" text-anchor="middle" font-family="serif" font-size="9" fill="#e0a040" font-style="italic">Sol Invictus</text>
   </svg>`),
 };

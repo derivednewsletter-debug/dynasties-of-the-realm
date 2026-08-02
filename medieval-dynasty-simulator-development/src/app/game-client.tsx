@@ -23,7 +23,7 @@ interface Family { id: string; name: string; age: number; role: string; path: Pa
 interface Citizen { id: string; name: string; occ: string; age: number; mood: number; skills: Record<string, number>; traits: string[]; memories: string[]; sid: string; orbit: number; dur: number; phase: number; rev: boolean }
 interface Building { id: string; name: string; level: number; desc: string; prod: Partial<Res>; cost: Partial<Res> }
 interface Settlement { id: string; bid: string; name: string; type: SType; x: number; y: number; pop: number; home: boolean; desc: string }
-interface Barony { id: string; name: string; house: string; region: Region; banner: string; motto: string; eco: number; mil: number; dip: number; rel: number; ambition: string; x: number; y: number; color: string }
+interface Barony { id: string; name: string; house: string; region: Region; banner: string; motto: string; eco: number; mil: number; dip: number; rel: number; ambition: string; x: number; y: number; color: string; story?: string; focus?: string }
 interface Rep { trust: number; respect: number; fear: number; prosperity: number; tradition: number }
 interface EvtOpt { label: string; hint: string; result: string; res?: Partial<Res>; rep?: Partial<Rep>; pres?: number }
 interface DecEvt { id: string; title: string; text: string; crisis: boolean; opts: EvtOpt[] }
@@ -91,13 +91,25 @@ const TEMPLE_FAITH = 6;         // faith gained per temple per season
 const WORSHIP_FAITH = 8;        // faith gained per worship action
 const DOMINION_THRESHOLD = 28;  // faith needed to dominate a domain
 
-const DEITY_INFO: Record<DeityId, { name: string; title: string; path: Path; domain: string; color: string; icon: string; benefit: string; bonus: Partial<Res> }> = {
-  astra:   { name: "Astra",    title: "The Hearth-Mother",   path: "Land",            domain: "Agriculture, hearth & home",   color: "#e8c860", icon: "🌾", benefit: "Food production and population growth.",  bonus: { food: 1.15 } },
-  kaelen:  { name: "Kaelen",   title: "The Iron Father",     path: "Iron",            domain: "Mining, craft & forge",        color: "#c8c8d0", icon: "⛏",  benefit: "Iron, tools and weapons output.",       bonus: { iron: 1.2, tools: 1.2, weapons: 1.2 } },
-  verna:   { name: "Verna",    title: "The Green Lady",      path: "Forest & Beast",  domain: "Forest, hunt & herb",          color: "#6db866", icon: "🌿", benefit: "Wood, leather and herbs output.",        bonus: { wood: 1.2, leather: 1.2, herbs: 1.2 } },
-  valen:   { name: "Valen",    title: "The Golden Scales",   path: "Sea",             domain: "Trade, sea & coin",            color: "#5ab8cc", icon: "🐟", benefit: "Silver income and fish yields.",        bonus: { fish: 1.25, silver: 1.15 } },
-  morvath: { name: "Morvath",  title: "The Gray Pilgrim",    path: "Scholar",         domain: "Knowledge & law",              color: "#b8b8d0", icon: "📜", benefit: "Tradition and respect.",                bonus: { medicine: 1.2 } },
-  sol:     { name: "Sol Invictus", title: "The High Arbiter", path: "Warrior",        domain: "War, order & justice",         color: "#e0a040", icon: "⚔",  benefit: "Military strength and morale.",        bonus: {} },
+const DEITY_INFO: Record<DeityId, { name: string; title: string; path: Path; domain: string; color: string; icon: string; benefit: string; bonus: Partial<Res>; myth: string; culture: string }> = {
+  astra:   { name: "Astra",    title: "The Hearth-Mother",   path: "Land",            domain: "Agriculture, population & storage logistics", color: "#e8c860", icon: "🌾", benefit: "Food production and population growth.",  bonus: { food: 1.15 },
+    myth: "When the first humans settled the central river valleys, Astra walked among them disguised as a wandering grandmother, teaching them how to turn over the heavy clay, store grain against the frost, and weave family lines into permanent villages.",
+    culture: "Hearth-altars sit at the literal geographic center of every village. Land rulers who follow her path treat starvation as a personal moral failure. Her holy days mark the first spring plow and the final autumn threshing." },
+  kaelen:  { name: "Kaelen",   title: "The Iron Father",     path: "Iron",            domain: "Metallurgy, mining & heavy industry",        color: "#c8c8d0", icon: "⛏",  benefit: "Iron, tools and weapons output.",       bonus: { iron: 1.2, tools: 1.2, weapons: 1.2 },
+    myth: "Forged in the volcanic heart of Thunder-Peak, Kaelen is the unyielding resistance of stone and metal against the entropy of nature — a faceless blacksmith hammering an anvil that never cracks.",
+    culture: "Worshiped intensely in the Western Highlands and Northern Marches, his temples double as guild halls where apprentices forge their first tool before taking vows. Iron rulers see civilization as a structure to be bolted together with rivets and beams." },
+  verna:   { name: "Verna",    title: "The Green Lady",      path: "Forest & Beast",  domain: "Forestry, hunt & herbal medicine",          color: "#6db866", icon: "🌿", benefit: "Wood, leather and herbs output.",        bonus: { wood: 1.2, leather: 1.2, herbs: 1.2 },
+    myth: "The wild, untamed sister of Astra: where Astra is the plowed furrow, Verna is the ancient canopy that grew before the first axe was ever swung.",
+    culture: "Forest folk raise no cathedrals to Verna — instead they protect Mother Groves, ancient oak and pine stands where no wood may be harvested. Her priests are hermits, rangers, and herbalists who treat sickness with willow bark and forest moss." },
+  valen:   { name: "Valen",    title: "The Golden Scales",   path: "Sea",             domain: "Maritime trade, ports & customs",            color: "#5ab8cc", icon: "🐟", benefit: "Silver income and fish yields.",        bonus: { fish: 1.25, silver: 1.15 },
+    myth: "The legendary first navigator, who dared sail past the coastal fog banks and discovered the sea was a bridge rather than a barrier. He is credited with minting the Realm's first standardized gold currency.",
+    culture: "Shrines to Valen sit inside bustling customs houses and harbors. Sea rulers treat commerce as a sacred pact — a broken contract is direct blasphemy against the Golden Scales." },
+  morvath: { name: "Morvath",  title: "The Gray Pilgrim",    path: "Scholar",         domain: "Archives, medicine & covert intelligence",   color: "#b8b8d0", icon: "📜", benefit: "Tradition and respect.",                bonus: { medicine: 1.2 },
+    myth: "The silent, hooded archivist of the universe. Legend says he records every human birth, political betrayal, and triumph in a celestial library spanning eternity — inspiring the earthly tradition of the dynastic Chronicle.",
+    culture: "Scholars, monks, and administrators pray to Morvath before opening a ledger or diagnosing a plague. His shrines are quiet, candlelit alcoves tucked inside university archives and monastery scriptoriums." },
+  sol:     { name: "Sol Invictus", title: "The High Arbiter", path: "Warrior",        domain: "War, knightly code & royal law",             color: "#e0a040", icon: "⚔",  benefit: "Military strength and morale.",        bonus: {},
+    myth: "The institutional champion of the Cathedral Faith and the Crown — the blinding light of truth, the rigidity of feudal law, and the divine mandate binding the fifty baronies to the central throne.",
+    culture: "His towering cathedrals dominate the skylines of major cities. Warrior rulers and garrison commanders swear martial oaths upon his altars, vowing to hold the line against invaders and rebels alike." },
 };
 
 const PATH_DEITY: Record<Path, DeityId> = { "Forest & Beast": "verna", "Iron": "kaelen", "Scholar": "morvath", "Warrior": "sol", "Sea": "valen", "Land": "astra" };
@@ -123,8 +135,6 @@ const TICKER: RN[] = ["food", "wood", "stone", "iron", "tools", "weapons", "silv
 const NAMES = ["Alden","Mira","Rowan","Elowen","Cedric","Brina","Osric","Tamsin","Gareth","Isolde","Perrin","Anwen","Edric","Liora","Maera","Alaric","Duncan","Maelys"];
 const SURNAMES = ["Moss","Vale","Brook","Fenn","Ash","Reed","Thorne","Hart","Wold","Grey","Miller","Carver"];
 const OCCS = ["farmer","woodcutter","herbalist","smith","fletcher","trapper","scribe","potter","goatherd","miller","guard","merchant"];
-const SPX = ["Stone","Willow","Ash","Green","Iron","River","Oak","Fox","Wolf","Gold","Red","Black","White","High","East","West","Elder","Bright","Grim","Salt"];
-const SSX = ["brook","fen","mere","hold","ford","gate","haven","ridge","vale","croft","wick","stead","bury","thorpe"];
 
 const OCC_STYLE: Record<string, { tunic: string; tool: string }> = {
   farmer: { tunic: "#5a7a3a", tool: "🌾" }, woodcutter: { tunic: "#6b4423", tool: "🪓" },
@@ -146,12 +156,12 @@ const BUILDS: Building[] = [
   { id: "shrine", name: "Old Faith Shrine", level: 1, desc: "Ancestral stones soften despair.", prod: { herbs: 2, medicine: 1 }, cost: { stone: 10, wood: 8, silver: 10 } },
   { id: "watch", name: "Ranger Outpost", level: 1, desc: "Drilled watch discourages bandits.", prod: { weapons: -1, silver: -2 }, cost: { wood: 24, stone: 12, weapons: 3, silver: 32 } },
   // ── Six Pillars temples ──
-  { id: "temple_astra", name: "Astra's Hearth Temple", level: 1, desc: "Hymns of the hearth mother keep granaries full and homes warm.", prod: { food: 12, medicine: 1 }, cost: { wood: 30, stone: 24, silver: 30 } },
-  { id: "temple_kaelen", name: "Kaelen's Forge Temple", level: 1, desc: "Priests bless the bellows and the ore-chant speeds the smiths.", prod: { iron: 4, tools: 3, weapons: 1 }, cost: { wood: 26, stone: 30, iron: 8, silver: 34 } },
-  { id: "temple_verna", name: "Verna's Grove Temple", level: 1, desc: "Sacred groves shelter the foresters and healers of the realm.", prod: { wood: 8, herbs: 6, leather: 2 }, cost: { wood: 40, stone: 16, silver: 24 } },
-  { id: "temple_valen", name: "Valen's Tidal Temple", level: 1, desc: "The golden scales bless the docks and the merchants' ledgers.", prod: { fish: 6, silver: 8 }, cost: { wood: 24, stone: 20, silver: 40 } },
-  { id: "temple_morvath", name: "Morvath's Scriptorium", level: 1, desc: "Scribes copy sacred law beneath the gray pilgrim's watchful eye.", prod: { medicine: 3, silver: 4 }, cost: { stone: 28, wood: 20, silver: 30 } },
-  { id: "temple_sol", name: "Sol's War Temple", level: 1, desc: "The High Arbiter's banners bless the host and the knightly halls.", prod: { weapons: 3, food: -2 }, cost: { stone: 32, wood: 22, weapons: 4, silver: 36 } },
+  { id: "temple_astra", name: "Hearth-Altar of Astra", level: 1, desc: "A hearth-altar raised at the center of the village keeps granaries full and homes warm.", prod: { food: 12, medicine: 1 }, cost: { wood: 30, stone: 24, silver: 30 } },
+  { id: "temple_kaelen", name: "Guild-Temple of Kaelen", level: 1, desc: "Priests bless the bellows; apprentices forge their first tool before taking vows.", prod: { iron: 4, tools: 3, weapons: 1 }, cost: { wood: 26, stone: 30, iron: 8, silver: 34 } },
+  { id: "temple_verna", name: "Mother Grove of Verna", level: 1, desc: "A protected ancient stand of oak and pine where no wood may be harvested.", prod: { wood: 8, herbs: 6, leather: 2 }, cost: { wood: 40, stone: 16, silver: 24 } },
+  { id: "temple_valen", name: "Customs Shrine of Valen", level: 1, desc: "The golden scales bless the harbors and every merchant ledger kept within.", prod: { fish: 6, silver: 8 }, cost: { wood: 24, stone: 20, silver: 40 } },
+  { id: "temple_morvath", name: "Scriptorium of Morvath", level: 1, desc: "A candlelit alcove where scribes copy sacred law beneath the Gray Pilgrim's eye.", prod: { medicine: 3, silver: 4 }, cost: { stone: 28, wood: 20, silver: 30 } },
+  { id: "temple_sol", name: "Cathedral of Sol Invictus", level: 1, desc: "A towering cathedral where garrison commanders swear their martial oaths.", prod: { weapons: 3, food: -2 }, cost: { stone: 32, wood: 22, weapons: 4, silver: 36 } },
 ];
 
 const EVENTS: DecEvt[] = [
@@ -340,62 +350,171 @@ function revealHexes(center: { x: number; y: number }, radius: number, level: nu
   return out;
 }
 
+/* ───────── the canon of Orestia ───────── */
+const PROVINCES: Region[] = ["Northern Marches","Heartlands","Western Highlands","Eastern Coast","Southern Wilds"];
+type OSat = [string, SType];
+interface OBarony { n: string; h: string; r: Region; c: [string, SType]; s: OSat[]; story: string; focus: string }
+
+const PROVINCE_BANNER: Record<Region, string[]> = {
+  "Northern Marches": ["🛡","❄","🐺","🗡","⚓","🪵","💀","🌉","🐑","🏰"],
+  Heartlands: ["♜","🌹","🛶","🌳","⛪","🌾","🥀","🐟","⛏","🐎","🍎","🌉","🌿","🏰","🧵"],
+  "Western Highlands": ["⛰","⛏","☁","🪙","🐐","🕳","⚡","🐻","🦅","🌫"],
+  "Eastern Coast": ["⚓","🕊","🦪","🌊","🐚","⚓","🐋","🌀","🥀","⚔"],
+  "Southern Wilds": ["🌲","🗿","🪵","🐗","🌌"],
+};
+const PROVINCE_MOTTO: Record<Region, string[]> = {
+  "Northern Marches": ["Stone remembers","No winter breaks us","The passes hold","Iron of the north","The long watch continues"],
+  Heartlands: ["By river and crown","Gold from the furrow","The court remembers","Harvest and honor","Wine, wheat, and sway"],
+  "Western Highlands": ["Iron and crag endure","Clan before crown","We answer to the mountain","Cold summit, true oath","The deep earth provides"],
+  "Eastern Coast": ["Trade is blood","Salt and sail","The tide returns","Ledger and compass","Fair winds to honest merchants"],
+  "Southern Wilds": ["The old roots endure","Beyond the map","Whispers in the canopy","Leave the stones unturned","Frontier hearts"],
+};
+const PROVINCE_AMBITION: Record<Region, string[]> = {
+  "Northern Marches": ["the northern passes","a royal warrant","expanded mines","hunting rights","fishing waters","timber tithes"],
+  Heartlands: ["royal favor","the disputed toll roads","a marriage pact","market charters","the copper mint","a court appointment"],
+  "Western Highlands": ["a royal charter","the hidden pass","silver claims","mountain guilds","the high council"],
+  "Eastern Coast": ["eastern trade","a naval commission","the pearl waters","lighthouse rights","the customs seat"],
+  "Southern Wilds": ["ancient shrines","frontier charters","the monolith trade","wildwood rights","a quiet border"],
+};
+
+const ORESTIA: OBarony[] = [
+  /* ── Region I: The Northern Marches ── */
+  { n: "Frostwatch", h: "Vane", r: "Northern Marches", c: ["Frostwatch Keep", "town"], s: [["Pale Ridge", "hamlet"], ["White-Tooth", "village"], ["Long-Hollow", "hamlet"], ["Bleak-Waters", "hamlet"]], focus: "war", story: "Built around an ancient cliffside fortress designed to hold back mountain raids; the Vane family has bled for three generations to keep the northern passes secure." },
+  { n: "Iron-Grip", h: "Hallow", r: "Northern Marches", c: ["Iron-Grip Bastion", "town"], s: [["Smith's Reach", "village"], ["Anvil-End", "hamlet"], ["Coal-Sump", "hamlet"], ["Greysmith", "hamlet"]], focus: "iron", story: "Famed for its dense network of surface iron mines and stubborn miners who view southern merchants with deep suspicion." },
+  { n: "Wolf-Run", h: "Starke", r: "Northern Marches", c: ["Pine-Heart", "village"], s: [["Winter's Edge", "hamlet"], ["Red-Moor", "hamlet"], ["Wolf-Den", "hamlet"], ["Timber-Fall", "hamlet"]], focus: "wood", story: "A heavily wooded barony where knights hunt massive timber wolves; their culture revolves around martial prowess and surviving brutal winters." },
+  { n: "High-Gallows", h: "Brae", r: "Northern Marches", c: ["Gallows-Hill", "town"], s: [["Hangman's Brook", "hamlet"], ["Crow-Roost", "hamlet"], ["Gallows-Gate", "village"], ["Silent-Moor", "hamlet"]], focus: "law", story: "Known for draconian laws and swift, unyielding justice enforced by a paranoid lord obsessed with banditry." },
+  { n: "Storm-Gate", h: "Vane-Koss", r: "Northern Marches", c: ["Storm-Gate", "town"], s: [["Wind-Whistle", "hamlet"], ["Gale-Crest", "village"], ["Spray-Reach", "hamlet"], ["Gull-Point", "hamlet"]], focus: "fish", story: "The northernmost coastal barony battered by freezing gales from the northern seas, maintaining rugged fishing fleets." },
+  { n: "Pine-Reach", h: "Forester", r: "Northern Marches", c: ["Green-Spire", "village"], s: [["Timber-Hold", "hamlet"], ["Resin-Well", "hamlet"], ["Moss-Bank", "village"], ["Bark-Skin", "hamlet"]], focus: "wood", story: "Dedicated entirely to lumber production, supplying timber for the entire northern defense network." },
+  { n: "Bone-Valley", h: "Skullsinger", r: "Northern Marches", c: ["Barrow-Town", "town"], s: [["Bone-Hollow", "hamlet"], ["Spirit-Well", "village"], ["Silent-Crypt", "hamlet"], ["Ghost-Hill", "hamlet"]], focus: "faith", story: "Built over ancient battlefields of the First People; locals practice ancestral rites to keep restless dead from stirring." },
+  { n: "Bitter-Creek", h: "Rivers", r: "Northern Marches", c: ["Bitter-Crossing", "village"], s: [["Muddy-Bank", "hamlet"], ["Silt-Trap", "hamlet"], ["Upper-Ford", "village"], ["Rush-Water", "hamlet"]], focus: "trade", story: "Fought over for decades due to its strategic river crossing; every bridge here has been burned and rebuilt five times." },
+  { n: "Frost-Hollow", h: "White", r: "Northern Marches", c: ["White-Haven", "town"], s: [["Snow-Drift", "hamlet"], ["Ice-Well", "hamlet"], ["Deep-Frost", "village"], ["Glacial-Fall", "hamlet"]], focus: "wool", story: "An isolated valley where snow lingers year-round; famous for its hardy white-wool sheep and woolen exports." },
+  { n: "Last-Watch", h: "Warden", r: "Northern Marches", c: ["Watchtower", "town"], s: [["Border-Post", "hamlet"], ["Scout-Hill", "hamlet"], ["Final-Stand", "village"], ["Shield-Wall", "hamlet"]], focus: "war", story: "The ultimate bulwark against the untamed wilderness beyond the Realm; its knights live a monastic, militaristic lifestyle." },
+  /* ── Region II: The Heartlands ── */
+  { n: "Crown-Lands", h: "Royal-Ward", r: "Heartlands", c: ["Gold-Haven", "city"], s: [["King's-Plow", "village"], ["Sun-Field", "hamlet"], ["High-Meadow", "hamlet"], ["Royal-Grain", "village"]], focus: "food", story: "Directly feeds the capital; its fields are the richest in the kingdom, making it the most politically coveted barony." },
+  { n: "Sun-Dappled", h: "Beaumont", r: "Heartlands", c: ["Beaumont Estate", "town"], s: [["Vine-End", "village"], ["Rose-Bower", "hamlet"], ["Honey-Brook", "hamlet"], ["Sunny-Slope", "hamlet"]], focus: "food", story: "Renowned for rolling vineyards, lavish garden estates, and deep ties to high-society fashion in the capital." },
+  { n: "River-Bend", h: "Sterling", r: "Heartlands", c: ["Sterling-Port", "city"], s: [["Deep-Reach", "village"], ["Silver-Stream", "hamlet"], ["Lock-Gate", "hamlet"], ["Miller's-Green", "village"]], focus: "trade", story: "Centered around a massive, slow-moving river junction that acts as the primary shipping hub for grain and cloth." },
+  { n: "Oakhaven", h: "Oakenshield", r: "Heartlands", c: ["Oakhaven", "town"], s: [["Acorn-Fall", "hamlet"], ["Great-Bough", "village"], ["Root-End", "hamlet"], ["Leaf-Dance", "hamlet"]], focus: "wood", story: "Built around a gargantuan, sacred oak forest protected by royal decree; harvesting requires ancient permits." },
+  { n: "High-Spire", h: "Valois", r: "Heartlands", c: ["Spire-View", "town"], s: [["Bell-Tower", "village"], ["Chant-Hill", "hamlet"], ["Cloister-Reach", "hamlet"], ["Monk's-Pond", "hamlet"]], focus: "faith", story: "Dominated by a massive cathedral complex; the local baron rules hand-in-hand with the Cathedral Faith." },
+  { n: "Wheat-Field", h: "Baker", r: "Heartlands", c: ["Golden-Bread", "village"], s: [["Miller's-Hill", "hamlet"], ["Flour-Sack", "hamlet"], ["Yeast-Brook", "village"], ["Crust-End", "hamlet"]], focus: "food", story: "A tranquil breadbasket barony whose people are entirely dedicated to farming, baking, and supplying the southern markets." },
+  { n: "Red-Rose", h: "Lancaster-Graft", r: "Heartlands", c: ["Red-Rose Manor", "town"], s: [["Thorn-Hedge", "hamlet"], ["Petal-Fall", "village"], ["Garden-Gate", "hamlet"], ["Bud-Point", "hamlet"]], focus: "herbs", story: "Famed for cultivating rare crimson roses used in royal perfumes and dyes; fiercely proud of their immaculate gardens." },
+  { n: "Silver-Lake", h: "Lakeview", r: "Heartlands", c: ["Mirror-Town", "town"], s: [["Reed-Bank", "hamlet"], ["Pike-Waters", "village"], ["Clear-Depth", "hamlet"], ["Swan-Nest", "hamlet"]], focus: "fish", story: "Built around a crystal-clear glacial lake famous for its sweet-water fish and peaceful, misty atmosphere." },
+  { n: "Copper-Field", h: "Bronze", r: "Heartlands", c: ["Copper-Town", "town"], s: [["Ore-Pit", "hamlet"], ["Smelter's-Glow", "village"], ["Green-Patina", "hamlet"], ["Forge-End", "hamlet"]], focus: "iron", story: "Contains the richest copper veins in the central plains, supplying coinage metal directly to the royal mint." },
+  { n: "Horse-Run", h: "Rider", r: "Heartlands", c: ["Stallion-Green", "town"], s: [["Mare's-Tail", "hamlet"], ["Colt-Paddock", "village"], ["Fast-Gallop", "hamlet"], ["Hay-Loft", "hamlet"]], focus: "war", story: "The premier breeding ground for warhorses and cavalry mounts used by the royal army." },
+  { n: "Apple-Orchard", h: "Cider", r: "Heartlands", c: ["Sweet-Apple", "village"], s: [["Cider-Press", "hamlet"], ["Orchard-End", "hamlet"], ["Blossom-Fall", "village"], ["Tart-Fruit", "hamlet"]], focus: "food", story: "Famous throughout the Realm for its autumn festivals, sweet ciders, and vast, rolling apple orchards." },
+  { n: "Great-Bridge", h: "Pontifex", r: "Heartlands", c: ["Bridge-End", "town"], s: [["Toll-Gate", "hamlet"], ["Arch-Span", "village"], ["River-Guard", "hamlet"], ["Stone-Pier", "hamlet"]], focus: "trade", story: "Controls the single largest stone bridge crossing the Great River, extracting heavy tolls from every merchant passing south." },
+  { n: "Quiet-Meadow", h: "Green", r: "Heartlands", c: ["Green-Acres", "village"], s: [["Sheep-Fold", "hamlet"], ["Gentle-Hill", "hamlet"], ["Long-Grass", "village"], ["Meadow-Brook", "hamlet"]], focus: "wool", story: "A sleepy, idyllic barony largely untouched by the grand political dramas of the capital—until tax collectors arrive." },
+  { n: "King's-Rest", h: "Moncrief", r: "Heartlands", c: ["Rest-Haven", "town"], s: [["Royal-Bed", "hamlet"], ["Sovereign's-Pond", "village"], ["Crown-Point", "hamlet"], ["Quiet-Hollow", "hamlet"]], focus: "law", story: "Originally established as a royal hunting lodge and vacation retreat for monarchs seeking escape from court intrigue." },
+  { n: "Velvet-Hills", h: "Velvet", r: "Heartlands", c: ["Velvet-Town", "town"], s: [["Silk-Weave", "village"], ["Loom-End", "hamlet"], ["Dye-Vat", "hamlet"], ["Soft-Slope", "hamlet"]], focus: "wool", story: "The textile manufacturing heartland, producing fine silks, velvets, and embroidered fabrics for nobility." },
+  /* ── Region III: The Western Highlands ── */
+  { n: "Stone-Hold", h: "Crag", r: "Western Highlands", c: ["Crag-Keep", "town"], s: [["Granite-Step", "hamlet"], ["Boulder-Fall", "village"], ["Cliff-Edge", "hamlet"], ["Quarry-Bottom", "hamlet"]], focus: "stone", story: "Clinging to the side of a sheer granite mountain; its people are master stonemasons who built half the castles in the Realm." },
+  { n: "Iron-Peak", h: "Iron-Hand", r: "Western Highlands", c: ["Iron-Peak", "town"], s: [["Deep-Mine", "village"], ["Ore-Cart", "hamlet"], ["Slag-Heap", "hamlet"], ["Smelter's-Hearth", "hamlet"]], focus: "iron", story: "A harsh, vertical barony where wealth is measured in tons of raw iron ore extracted from black mountain tunnels." },
+  { n: "Cloud-Reach", h: "High-Cloud", r: "Western Highlands", c: ["Cloud-Town", "village"], s: [["Peak-View", "hamlet"], ["Mist-Shroud", "hamlet"], ["Eagle-Nest", "village"], ["Wind-Swept", "hamlet"]], focus: "wool", story: "Perched so high above the clouds that winters last eight months; residents communicate across peaks via signal fires." },
+  { n: "Silver-Mines", h: "Silver-Vein", r: "Western Highlands", c: ["Silver-Town", "town"], s: [["Shaft-Three", "hamlet"], ["Nugget-Brook", "village"], ["Miner's-Rest", "hamlet"], ["Bright-Lode", "hamlet"]], focus: "silver", story: "Site of the Realm's richest silver strike fifty years ago, sparking a chaotic gold-rush era that left behind haunted shafts." },
+  { n: "Goat-Horn", h: "MacLeod", r: "Western Highlands", c: ["Horn-Keep", "village"], s: [["High-Pasture", "hamlet"], ["Mountain-Goat", "hamlet"], ["Craggy-Path", "village"], ["Bleat-Valley", "hamlet"]], focus: "wool", story: "A fiercely independent clan barony that speaks its own regional dialect and refuses to pay full royal tithes." },
+  { n: "Deep-Cavern", h: "Stone-Borer", r: "Western Highlands", c: ["Cavern-Town", "town"], s: [["Dark-Tunnel", "hamlet"], ["Echo-Hall", "village"], ["Stalactite-Drop", "hamlet"], ["Sub-Root", "hamlet"]], focus: "stone", story: "Most of its population lives and works in massive subterranean limestone caverns carved out over centuries." },
+  { n: "Thunder-Peak", h: "Storm-Bringer", r: "Western Highlands", c: ["Storm-Summit", "town"], s: [["Lightning-Rod", "hamlet"], ["Thunder-Clap", "village"], ["Rain-Shadow", "hamlet"], ["Peak-End", "hamlet"]], focus: "faith", story: "A jagged mountain range constantly struck by violent electrical storms; monks study lightning strikes as divine omens." },
+  { n: "Bear-Tooth", h: "Ursus", r: "Western Highlands", c: ["Ursus-Hold", "village"], s: [["Claw-Mark", "hamlet"], ["Honey-Cave", "village"], ["Fur-Trapper", "hamlet"], ["Den-Entrance", "hamlet"]], focus: "leather", story: "Populated by rough-hewn mountain folk who tame giant cave-bears for heavy lifting and frontline defense." },
+  { n: "Eagle-Crest", h: "Falcon", r: "Western Highlands", c: ["Falcon-Roost", "town"], s: [["Talon-Point", "hamlet"], ["Wing-Span", "village"], ["Feather-Fall", "hamlet"], ["High-Perch", "hamlet"]], focus: "war", story: "Famed for training royal hunting falcons and maintaining elite archer regiments recruited from high-altitude scouts." },
+  { n: "Lost-Pass", h: "Wander-Lost", r: "Western Highlands", c: ["Pass-End", "village"], s: [["Smuggler's-Nook", "hamlet"], ["Blind-Turn", "hamlet"], ["Hidden-Valley", "village"], ["Fog-Gate", "hamlet"]], focus: "trade", story: "Controls a secret, treacherous mountain pass used by smugglers and outlaws to bypass royal customs checkpoints." },
+  /* ── Region IV: The Eastern Coast ── */
+  { n: "Salt-Haven", h: "Mariner", r: "Eastern Coast", c: ["Salt-Haven", "city"], s: [["Tidal-Pool", "village"], ["Kelp-Bed", "hamlet"], ["Crab-Cove", "hamlet"], ["Salt-Pan", "village"]], focus: "trade", story: "The premier naval port of the east; its merchants dominate the eastern trade routes across the narrow sea." },
+  { n: "Gull-Wing", h: "Gull", r: "Eastern Coast", c: ["Gull-Town", "town"], s: [["Nest-Point", "hamlet"], ["White-Wing", "village"], ["Shore-Break", "hamlet"], ["Driftwood-End", "hamlet"]], focus: "fish", story: "A quiet coastal community specializing in salted cod, whale oil, and expert shipwright carpentry." },
+  { n: "Pearl-Bay", h: "Pearl", r: "Eastern Coast", c: ["Pearl-Cove", "town"], s: [["Deep-Dive", "hamlet"], ["Oyster-Bed", "village"], ["Lagoon-Edge", "hamlet"], ["Shimmer-Water", "hamlet"]], focus: "silver", story: "Famous for divers who harvest rare iridescent pearls from dangerous coral reefs beneath the turquoise bay." },
+  { n: "Storm-Coast", h: "Drake", r: "Eastern Coast", c: ["Drake-Port", "town"], s: [["Wave-Crest", "hamlet"], ["Sea-Monster", "village"], ["Lighthouse-Point", "hamlet"], ["Reef-End", "hamlet"]], focus: "fish", story: "Battered by violent sea storms; home to the legendary coastal lighthouse that has guided ships for four centuries." },
+  { n: "Coral-Reach", h: "Coral", r: "Eastern Coast", c: ["Coral-Town", "village"], s: [["Pink-Sand", "hamlet"], ["Reef-Walk", "village"], ["Shell-Beach", "hamlet"], ["Tide-Line", "hamlet"]], focus: "trade", story: "A tropical-leaning southern coast barony known for exotic spice imports and colorful seaside architecture." },
+  { n: "Anchor-Point", h: "Anchor", r: "Eastern Coast", c: ["Anchor-Hold", "town"], s: [["Chain-Link", "hamlet"], ["Dry-Dock", "village"], ["Sailor's-Rest", "hamlet"], ["Harbor-Mouth", "hamlet"]], focus: "wood", story: "The primary military naval shipyard where the king's war galleys are built, repaired, and refitted." },
+  { n: "Whale-Bay", h: "Whaler", r: "Eastern Coast", c: ["Blubber-Town", "village"], s: [["Harpoon-Point", "hamlet"], ["Oil-Vat", "village"], ["Bone-Carver", "hamlet"], ["Fin-End", "hamlet"]], focus: "fish", story: "Dedicated entirely to the dangerous trade of deep-sea whaling, providing oil for lamps across the entire Realm." },
+  { n: "Siren-Song", h: "Siren", r: "Eastern Coast", c: ["Siren-Cove", "town"], s: [["Fog-Bank", "hamlet"], ["Rocky-Shoal", "village"], ["Whispering-Tide", "hamlet"], ["Echo-Bay", "hamlet"]], focus: "fish", story: "Plagued by treacherous underwater rocks and coastal legends of sailors lured onto reefs by mysterious voices." },
+  { n: "Amber-Coast", h: "Amber", r: "Eastern Coast", c: ["Amber-Town", "town"], s: [["Resin-Beach", "village"], ["Fossil-Find", "hamlet"], ["Golden-Drop", "hamlet"], ["Wave-Wash", "hamlet"]], focus: "silver", story: "Known for ancient fossilized tree resin washing ashore, carved into expensive jewelry worn by high nobility." },
+  { n: "Pirate's-Bane", h: "Corsair-Hunter", r: "Eastern Coast", c: ["Bane-Port", "town"], s: [["Lookout-Cliff", "hamlet"], ["Cutlass-Cove", "village"], ["Galley-Row", "hamlet"], ["Skull-Point", "hamlet"]], focus: "war", story: "A heavily militarized coastal barony founded specifically to hunt down and eradicate eastern pirate corsairs." },
+  /* ── Region V: The Southern Wilds ── */
+  { n: "Silent-Woods", h: "Greenwood", r: "Southern Wilds", c: ["Silent-Town", "village"], s: [["Shadow-Leaf", "hamlet"], ["Moss-Trunk", "hamlet"], ["Whispering-Canopy", "village"], ["Root-Deep", "hamlet"]], focus: "wood", story: "A deeply superstitious forest barony where locals refuse to cut down old trees due to lingering animistic spirits." },
+  { n: "Monolith-Plain", h: "Ancient", r: "Southern Wilds", c: ["Standing-Stone", "town"], s: [["Circle-Henge", "village"], ["Rune-Rock", "hamlet"], ["Sun-Dials", "hamlet"], ["Whisper-Stone", "hamlet"]], focus: "faith", story: "Dominated by massive, inexplicable stone monoliths built by The First People; scholars and treasure hunters frequent the area." },
+  { n: "Swamp-End", h: "Marsh", r: "Southern Wilds", c: ["Marsh-Town", "village"], s: [["Peat-Bog", "hamlet"], ["Reed-Shed", "hamlet"], ["Mud-Hole", "village"], ["Frog-Pond", "hamlet"]], focus: "coal", story: "A gloomy, mosquito-ridden wetland barony producing high-grade peat fuel and hiding desperate outlaws." },
+  { n: "Wild-Boar", h: "Boar", r: "Southern Wilds", c: ["Boar-Tusk", "village"], s: [["Snout-Ridge", "hamlet"], ["Thicket-Run", "village"], ["Mud-Wallow", "hamlet"], ["Oak-Mast", "hamlet"]], focus: "food", story: "A dense scrubland where massive, aggressive wild boars roam freely, making farming a daily combat sport." },
+  { n: "World's-End", h: "Frontier", r: "Southern Wilds", c: ["Frontier-Outpost", "village"], s: [["Last-Hearth", "hamlet"], ["Edge-Map", "hamlet"], ["Unknown-Border", "village"], ["Wilderness-Gate", "hamlet"]], focus: "war", story: "The absolute southern edge of civilization; beyond its palisade walls lies uncharted wilderness and forgotten history." },
+];
+
 /* ───────── world gen ───────── */function genWorld(cd?: CharData) {
-  const regions: Region[] = ["Northern Marches","Heartlands","Western Highlands","Eastern Coast","Southern Wilds"];
-  const houses = ["Veyne","Corwall","Dunmere","Ashford","Saltwyn","Grimhart","Elderbrook","Kestrel","Marrow","Brightmere"];
-  const ambitions = ["a marriage pact","the disputed toll roads","royal favor","expanded mines","a rival claimant","eastern trade","an ancient shrine"];
-  const banners = ["⚜","🛡","☾","♜","✦","⚔","🦌","🦅","🐺","⚓"];
-  const mottos = ["Stone remembers","By river and crown","No winter breaks us","Trade is blood","The old roots endure"];
   const playerHouse = cd?.houseName ? `House ${cd.houseName}` : "House Sheatsley";
   const playerBanner = cd?.banner ? { Lion: "🦁", Eagle: "🦅", Oak: "🌳", Wolf: "🐺", Crown: "♚" }[cd.banner] : "♜";
   const playerMotto = cd?.region ? REGION_RES[cd.region].motto : "From quiet roots, lasting shade";
+  const homeProvince: Region = REGION_RES[cd?.region ?? "Golden Plains"].province;
   const baronies: Barony[] = [];
   const settlements: Settlement[] = [];
   let si = 0;
 
-  for (let i = 0; i < 50; i++) {
-    const region = regions[i % 5];
-    const c = RC[region];
-    const slot = Math.floor(i / 5);
-    const a = (slot / 10) * Math.PI * 2 + (i % 5) * 0.62 + seed(i) * 0.3;
-    const r = 700 + slot * 240 + seed(i + 3) * 320;
-    const x = cl(c.x + Math.cos(a) * r, 700, W - 700);
-    const y = cl(c.y + Math.sin(a) * r * 0.8, 700, H - 700);
-    const isP = i === 0;
-
-    baronies.push({
-      id: `b-${i}`,
-      name: isP ? "Hearthmere Barony" : `${region.split(" ")[0]} ${i % 2 ? "Cross" : "Hold"} ${i + 1}`,
-      house: isP ? playerHouse : `House ${houses[i % 10]}`,
-      region, banner: isP ? playerBanner : banners[i % 10],
-      motto: isP ? playerMotto : mottos[i % 5],
-      eco: 35 + (i * 11) % 55, mil: 20 + (i * 17) % 70, dip: 25 + (i * 13) % 60,
-      rel: isP ? 100 : i % 7 === 0 ? -12 : 8 + i % 18,
-      ambition: ambitions[i % 7], x, y, color: RCOL[region],
+  const settle = (b: Barony, name: string, type: SType, x: number, y: number, home: boolean) => {
+    settlements.push({
+      id: `s-${si}`, bid: b.id, name, type, x, y,
+      pop: type === "city" ? 800 + si % 5 * 120 : type === "town" ? 320 + si % 4 * 40 : type === "village" ? 110 + si % 6 * 18 : 40 + si % 5 * 8,
+      home,
+      desc: type === "city" ? "A walled seat of power, ringed with markets and towers." : type === "town" ? "A bustling market town where roads and ambitions meet." : type === "village" ? "A working village of farms, crafts and parish life." : "A small frontier settlement clinging to the land.",
     });
-
-    const sc = 3 + i % 4;
-    for (let s = 0; s < sc; s++) {
-      const sa = (s / sc) * Math.PI * 2 + seed(i * 10 + s) * 1.1;
-      const sr = s === 0 ? 0 : 420 + seed(i + s * 7) * 340;
-      const sx = cl(x + Math.cos(sa) * sr, 400, W - 400);
-      const sy = cl(y + Math.sin(sa) * sr * 0.85, 400, H - 400);
-      let type: SType = "hamlet";
-      if (s === 0 && i % 9 === 0) type = "city";
-      else if (s === 0 && i % 4 === 0) type = "town";
-      else if (s === 0 || i % 3 === 0) type = "village";
-      if (isP && s === 0) type = "hamlet";
-      settlements.push({
-        id: `s-${si}`, bid: `b-${i}`,
-        name: isP && s === 0 ? "Hearthmere" : `${SPX[si % SPX.length]}${SSX[(si * 3) % SSX.length]}`,
-        type: isP && s === 0 ? "hamlet" : type, x: sx, y: sy,
-        pop: type === "city" ? 800 + i % 5 * 120 : type === "town" ? 320 + i % 4 * 40 : type === "village" ? 110 + i % 6 * 18 : 40 + i % 5 * 8,
-        home: isP && s === 0,
-        desc: type === "city" ? "A walled seat of power, ringed with markets and towers." : type === "town" ? "A bustling market town where roads and ambitions meet." : type === "village" ? "A working village of farms, crafts and parish life." : "A small frontier settlement clinging to the land.",
-      });
-      si++;
+    si++;
+  };
+  const addSettlements = (b: Barony, anchor: [string, SType], sats: OSat[], home: boolean) => {
+    settle(b, anchor[0], anchor[1], b.x, b.y, home);
+    const n = sats.length;
+    for (let s = 0; s < n; s++) {
+      const sa = (s / n) * Math.PI * 2 + seed(b.id.length + s) * 1.1;
+      const sr = 420 + seed(b.id.length + s * 7) * 340;
+      const [sName, sType] = sats[s];
+      settle(b, sName, sType, cl(b.x + Math.cos(sa) * sr, 400, W - 400), cl(b.y + Math.sin(sa) * sr * 0.85, 400, H - 400), false);
     }
+  };
+  const placeIn = (r: Region, idx: number, count: number): { x: number; y: number } => {
+    const c = RC[r];
+    const a = (idx / count) * Math.PI * 2 + seed(r.length + idx * 7) * 0.45;
+    const ring = (r === "Heartlands" ? 980 : 680) + (idx % 4) * 250 + seed(r.length * 13 + idx) * 220;
+    return { x: cl(c.x + Math.cos(a) * ring, 700, W - 700), y: cl(c.y + Math.sin(a) * ring * 0.8, 700, H - 700) };
+  };
+
+  // the player's fledgling holding
+  const homePos = placeIn(homeProvince, 1, 2);
+  const homeB: Barony = {
+    id: "b-player", name: "Hearthmere Barony", house: playerHouse, region: homeProvince, banner: playerBanner,
+    motto: playerMotto, eco: 35, mil: 20, dip: 25, rel: 100, ambition: "a new name in the Chronicle",
+    x: homePos.x, y: homePos.y, color: RCOL[homeProvince],
+    story: `A fledgling holding carved from the ${homeProvince.toLowerCase()}, where ${playerHouse} stakes a claim that will echo down the centuries.`,
+    focus: "growth",
+  };
+  baronies.push(homeB);
+  addSettlements(homeB, ["Hearthmere", "hamlet"], [["Oakhollow", "village"], ["Fernwick", "hamlet"], ["Millreach", "hamlet"]], true);
+
+  // the fifty canon baronies
+  const perRegion: Record<Region, OBarony[]> = { "Northern Marches": [], Heartlands: [], "Western Highlands": [], "Eastern Coast": [], "Southern Wilds": [] };
+  for (const ob of ORESTIA) perRegion[ob.r].push(ob);
+  for (const r of PROVINCES) {
+    const list = perRegion[r];
+    const banners = PROVINCE_BANNER[r];
+    const mottos = PROVINCE_MOTTO[r];
+    const ambitions = PROVINCE_AMBITION[r];
+    list.forEach((ob, idx) => {
+      const pos = placeIn(r, idx, list.length);
+      const b: Barony = {
+        id: `b-${ob.n.replace(/[^A-Za-z]/g, "").toLowerCase()}`,
+        name: `Barony of ${ob.n}`, house: `House ${ob.h}`, region: r, banner: banners[idx % banners.length],
+        motto: mottos[idx % mottos.length], eco: 35 + (idx * 11 + r.length) % 55, mil: 20 + (idx * 17) % 70, dip: 25 + (idx * 13) % 60,
+        rel: idx % 7 === 0 ? -12 : 8 + idx % 18, ambition: ambitions[idx % ambitions.length], x: pos.x, y: pos.y, color: RCOL[r],
+        story: ob.story, focus: ob.focus,
+      };
+      baronies.push(b);
+      addSettlements(b, ob.c, ob.s, false);
+    });
   }
+
+  // the Great Capital, cradled at the geographic center
+  const capital: Barony = {
+    id: "b-capital", name: "The Great Capital", house: "The Crown", region: "Heartlands", banner: "♛",
+    motto: "The throne binds all baronies", eco: 90, mil: 85, dip: 95, rel: 40,
+    ambition: "the long peace of the Realm", x: RC.Heartlands.x, y: RC.Heartlands.y - 160, color: "#c8a84e",
+    story: "The seat of the throne and the Cathedral Faith, cradled at the geographic center of Orestia — the divine mandate that binds the fifty baronies beneath one crown.",
+    focus: "law",
+  };
+  baronies.push(capital);
+  addSettlements(capital, ["The Great Capital", "city"], [["Golden-Gate", "village"], ["Court-Garden", "hamlet"], ["High-Road", "hamlet"]], false);
+
   return { baronies, settlements };
 }
 
@@ -423,12 +542,12 @@ function genCitizens(settlements: Settlement[]): Citizen[] {
 
 type CharData = { region: RegionChoice; gender: GenderChoice; firstName: string; houseName: string; banner: BannerChoice; path: string; portrait: PortraitChoice };
 
-const REGION_RES: Record<RegionChoice, Partial<Res> & { motto: string; difficulty: number }> = {
-  "Forest Valley":     { food: 60, wood: 110, stone: 14, iron: 4, fish: 6, wool: 8, herbs: 28, leather: 16, motto: "Deep roots, strong timber", difficulty: 1 },
-  "Golden Plains":     { food: 120, wood: 48, stone: 18, iron: 6, fish: 4, wool: 20, herbs: 8, leather: 8, silver: 45, motto: "From golden fields, abundance", difficulty: 1 },
-  "Mountain Highlands":{ food: 40, wood: 56, stone: 40, iron: 22, coal: 6, wool: 6, herbs: 6, leather: 8, motto: "Stone endures, iron conquers", difficulty: 2 },
-  "Coastal Bay":       { food: 54, wood: 60, stone: 18, iron: 6, fish: 28, wool: 10, herbs: 12, leather: 6, silver: 30, motto: "Tides bring fortune", difficulty: 1.5 },
-  "River Kingdom":     { food: 96, wood: 66, stone: 20, iron: 6, fish: 16, wool: 14, herbs: 14, leather: 10, silver: 20, motto: "The river provides, the river protects", difficulty: 1.5 },
+const REGION_RES: Record<RegionChoice, Partial<Res> & { motto: string; difficulty: number; province: Region }> = {
+  "Forest Valley":     { food: 60, wood: 110, stone: 14, iron: 4, fish: 6, wool: 8, herbs: 28, leather: 16, motto: "Deep roots, strong timber", difficulty: 1, province: "Northern Marches" },
+  "Golden Plains":     { food: 120, wood: 48, stone: 18, iron: 6, fish: 4, wool: 20, herbs: 8, leather: 8, silver: 45, motto: "From golden fields, abundance", difficulty: 1, province: "Heartlands" },
+  "Mountain Highlands":{ food: 40, wood: 56, stone: 40, iron: 22, coal: 6, wool: 6, herbs: 6, leather: 8, motto: "Stone endures, iron conquers", difficulty: 2, province: "Western Highlands" },
+  "Coastal Bay":       { food: 54, wood: 60, stone: 18, iron: 6, fish: 28, wool: 10, herbs: 12, leather: 6, silver: 30, motto: "Tides bring fortune", difficulty: 1.5, province: "Eastern Coast" },
+  "River Kingdom":     { food: 96, wood: 66, stone: 20, iron: 6, fish: 16, wool: 14, herbs: 14, leather: 10, silver: 20, motto: "The river provides, the river protects", difficulty: 1.5, province: "Heartlands" },
 };
 
 function initGame(cd?: CharData): GS {
@@ -955,6 +1074,26 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           }
         }
 
+        // ──── COLD TENSIONS & GENERATIONAL MEMORY ────
+        // The Long Peace: 50 proud baronies bound by 40 years of treaties. Encroach on a
+        // neighbor's livelihood — cut timber claimed by a forest barony, undercut a highland
+        // clan's iron — and memory objects form that outlive rulers.
+        if (prev.season !== season) {
+          const focusRes: Record<string, RN | null> = { food: "food", wood: "wood", iron: "iron", coal: "coal", fish: "fish", silver: "silver", wool: "wool", herbs: "herbs", leather: "leather", stone: "stone", tools: "tools" };
+          const resLabel: Record<string, string> = { food: "harvest", wood: "timber", iron: "iron", coal: "peat", fish: "catch", silver: "silver", wool: "wool", herbs: "herbs", leather: "hides", stone: "stone", tools: "tools" };
+          for (const b of baronies) {
+            if (b.id === prev.baronies[0]?.id || b.focus === "growth") continue;
+            const rn = focusRes[b.focus ?? ""];
+            if (!rn) continue;
+            const prod = rate[rn] ?? 0;
+            if (prod >= 4 && b.rel < -8 && Math.random() < 0.14 * step) {
+              const houseNm = prev.baronies[0]?.house ?? "House Sheatsley";
+              extra.push(chron(year, season, "Cold Tensions", `${b.house} of ${b.name} mutters that ${houseNm} has taken too much of its ${resLabel[rn]} — the long peace holds, barely.`, "warning"));
+              baronies = baronies.map(x => x.id === b.id ? { ...x, rel: cl(x.rel - 4, -100, 100) } : x);
+            }
+          }
+        }
+
         // random decision event — filter by current rank to avoid anachronisms
         let evt: DecEvt | null = null;
         if (Math.random() < 0.008 * step) {
@@ -1198,6 +1337,19 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   useEffect(() => {
     if (g.dynastyExtinct && onEnding) {
       setSpeed(0);
+      const roads = (() => {
+        const byBid = new Map<string, { id: string; x: number; y: number }>();
+        for (const s of g.settlements) if (!byBid.has(s.bid)) byBid.set(s.bid, s);
+        const out: { x1: number; y1: number; x2: number; y2: number; level: number }[] = [];
+        for (const s of g.settlements) {
+          const anc = byBid.get(s.bid);
+          if (anc && anc.id !== s.id) out.push({ x1: anc.x, y1: anc.y, x2: s.x, y2: s.y, level: 2 });
+        }
+        return out;
+      })();
+      const rulers = g.chronicle
+        .filter(e => e.title.includes("Takes the Seat") || e.title.includes("Crowned") || e.title.includes("Inherits"))
+        .map(e => ({ name: e.title.replace(" Takes the Seat", "").replace(" Inherits the Seat", "").replace(" Crowned", ""), year: e.year }));
       const endingData: EndingData = {
         chronicle: g.chronicle,
         houseName: charData?.houseName ?? "Sheatsley",
@@ -1205,6 +1357,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
         startYear: 1,
         endYear: g.year,
         settlements: g.settlements.map(s => ({ id: s.id, name: s.name, type: s.type, x: s.x, y: s.y, peakType: s.type })),
+        roads, rulers,
         peakRank: g.peakRank,
         totalPrestige: g.prestige,
         battlesFought: g.battlesFought,
@@ -1527,11 +1680,11 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
   useEffect(() => {
     if (!charData) return;
     const regionMap: Record<RegionChoice, { x: number; y: number }> = {
-      "Forest Valley": { x: 3500, y: 5000 },
-      "Golden Plains": { x: 7500, y: 5500 },
-      "Mountain Highlands": { x: 6500, y: 1800 },
-      "Coastal Bay": { x: 12000, y: 4800 },
-      "River Kingdom": { x: 2500, y: 7200 },
+      "Forest Valley": { x: 7500, y: 1500 },
+      "Golden Plains": { x: 7500, y: 5000 },
+      "Mountain Highlands": { x: 2300, y: 4700 },
+      "Coastal Bay": { x: 12700, y: 4500 },
+      "River Kingdom": { x: 7500, y: 5000 },
     };
     const pos = regionMap[charData.region];
     center(pos.x, pos.y, 0.55);
@@ -2069,7 +2222,8 @@ function BarPanel({ b, g, center, pickS, setPanel }: { b: Barony; g: GS; center:
       <div>
         <div className="flex items-center gap-3"><span className="grid h-12 w-12 place-items-center rounded-full text-xl" style={{ background: b.color }}>{b.banner}</span><div><h3 className="text-[15px] font-bold">{b.house}</h3><p className="text-[12px] text-[#c8a84e]">{b.name}</p></div></div>
         <p className="mt-2 text-[12px] italic text-[#8d8674]">&ldquo;{b.motto}&rdquo;</p>
-        <p className="mt-1 text-[12px]">{b.region} · seeks {b.ambition}</p>
+        {b.story && <p className="mt-2 rounded-xl border-l-2 border-[#c8a84e]/30 bg-[#c8a84e]/5 px-3 py-2 text-[11px] leading-relaxed text-[#bbb5a0]">{b.story}</p>}
+        <p className="mt-2 text-[12px]">{b.region} · seeks {b.ambition}</p>
         {allied && <p className="mt-1 text-[11px] font-semibold text-emerald-400">Bound to you by {allied.kind}</p>}
         {g.atWar.includes(b.id) && <p className="mt-1 text-[11px] font-semibold text-red-400">At war with {g.baronies[0]?.house ?? "your house"}</p>}
         <Meter l="Economy" v={b.eco} /><Meter l="Military" v={b.mil} /><Meter l="Diplomacy" v={b.dip} /><Meter l="Relations" v={b.rel + 50} />
@@ -2333,6 +2487,7 @@ function FaithPanel({ g, worship, councilFaith, rulerPath }: { g: GS; worship: (
   const faith = g.faith ?? {};
   const dominant = getDominantDeity(faith);
   const temples = g.buildings.filter(b => TEMPLE_OF[b.id]);
+  const [legend, setLegend] = useState<DeityId | null>(null);
   return (
     <div className="space-y-5">
       {/* Dominion banner */}
@@ -2379,7 +2534,15 @@ function FaithPanel({ g, worship, councilFaith, rulerPath }: { g: GS; worship: (
               <div className="mt-3 flex flex-wrap gap-1.5">
                 <button onClick={() => worship(d)} disabled={!affordIt} className={`flex-1 rounded-lg px-3 py-1.5 text-[10px] font-semibold transition ${affordIt ? "bg-[#c8a84e] text-[#1a1611] hover:brightness-110" : "cursor-not-allowed bg-white/6 text-[#8d8674] opacity-50"}`}>Worship · {fmtD(cost)}</button>
                 <button onClick={() => councilFaith(d)} className="rounded-lg bg-white/6 px-3 py-1.5 text-[10px] font-semibold hover:bg-white/12">Invoke</button>
+                <button onClick={() => setLegend(legend === d ? null : d)} className="rounded-lg bg-white/4 px-3 py-1.5 text-[10px] font-semibold text-[#8d8674] hover:bg-white/8">📖 Legend</button>
               </div>
+              {legend === d && (
+                <div className="mt-3 space-y-2 rounded-xl border border-[#c8a84e]/20 bg-[#1a1611]/60 p-3">
+                  <p className="text-[10px] uppercase tracking-wider text-[#c8a84e]">The Path of {info.path}</p>
+                  <p className="text-[11px] leading-relaxed text-[#bbb5a0]"><span className="italic text-[#c8a84e]">Myth —</span> {info.myth}</p>
+                  <p className="text-[11px] leading-relaxed text-[#bbb5a0]"><span className="italic text-[#c8a84e]">Culture —</span> {info.culture}</p>
+                </div>
+              )}
             </div>
           );
         })}
