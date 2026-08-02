@@ -434,6 +434,8 @@ function initGame(cd?: CharData): GS {
       hexes = revealHexes(home, 1400, 1, hexes); // wider area dim
       return hexes;
     })(),
+    // Deity faith levels — all start neutral
+    faith: { astra: 0, kaelen: 0, verna: 0, valen: 0, morvath: 0, sol: 0 },
   };
 }
 
