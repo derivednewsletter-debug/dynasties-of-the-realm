@@ -558,7 +558,8 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
             });
             const heirs = family.filter(m => m.status === "Living" && m.id !== "mentor").length;
             if (heirs < 3 && year > 1 && Math.random() < 0.55) {
-              const ch: Family = { id: uid("h"), name: `${NAMES[(year + pop) % NAMES.length]} Sheatsley`, age: 0, role: "Child of the House", path: PATHS[(year + prestige) % PATHS.length], traits: ["curious"], status: "Living" };
+              const houseNm = charData?.houseName ?? "Sheatsley";
+              const ch: Family = { id: uid("h"), name: `${NAMES[(year + pop) % NAMES.length]} ${houseNm}`, age: 0, role: "Child of the House", path: PATHS[(year + prestige) % PATHS.length], traits: ["curious"], status: "Living" };
               family = [...family, ch];
               extra.push(chron(year, season, "An Heir Is Born", `${ch.name} born beneath the banner.`, "hope"));
               lineagesBorn += 1;
