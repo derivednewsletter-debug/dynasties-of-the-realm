@@ -1,5 +1,5 @@
 {
   "buildCommand": "cd medieval-dynasty-simulator-development && npm install && npm run build",
-  "outputDirectory": "medieval-dynasty-simulator-development/.next",
-  "installCommand": "cd medieval-dynasty-simulator-development && npm install"
+  "installCommand": "cd medieval-dynasty-simulator-development && npm install",
+  "framework": "nextjs"
 }
