@@ -1,9 +1,11 @@
 "use client";
 import { useState } from "react";
+import { CREATION_PORTRAITS } from "@/components/game-svgs";
 
 export type RegionChoice = "Forest Valley" | "Golden Plains" | "Mountain Highlands" | "Coastal Bay" | "River Kingdom";
 export type BannerChoice = "Lion" | "Eagle" | "Oak" | "Wolf" | "Crown";
 export type GenderChoice = "male" | "female";
+export type PortraitChoice = "bearded-chief" | "young-warrior" | "wise-elder" | "noble-lady" | "scarred-vet" | "mystic-seer" | "hardy-farmer" | "sea-captain";
 
 export const REGIONS: Record<RegionChoice, { color: string; difficulty: string; main: string; desc: string; x: number; y: number }> = {
   "Forest Valley":    { color: "#4a7a3a", difficulty: "Easy",   main: "Wood & Herbs",     desc: "Deep pines shelter abundant game and timber.", x: 3500, y: 5000 },
@@ -30,6 +32,17 @@ export const BANNERS: Record<BannerChoice, { icon: string; label: string }> = {
   Crown: { icon: "♚",  label: "The Crown — ambition and rule" },
 };
 
+export const PORTRAITS: Record<PortraitChoice, { label: string; desc: string }> = {
+  "bearded-chief": { label: "The Bearded Chief", desc: "A seasoned leader with a crown of iron." },
+  "young-warrior": { label: "The Young Warrior", desc: "Battle-scarred but fierce, born for glory." },
+  "wise-elder":    { label: "The Wise Elder", desc: "A hooded mentor with ancient knowledge." },
+  "noble-lady":    { label: "The Noble Lady", desc: "Regal and poised, adorned with gold." },
+  "scarred-vet":   { label: "The Scarred Veteran", desc: "Hardened by years of war and loss." },
+  "mystic-seer":   { label: "The Mystic Seer", desc: "Eyes that see beyond the veil." },
+  "hardy-farmer":  { label: "The Hardy Farmer", desc: "Rooted in the soil, strong and steady." },
+  "sea-captain":   { label: "The Sea Captain", desc: "Weathered by tides, bold as the wind." },
+};
+
 interface Props {
   onCreate: (data: {
     region: RegionChoice;
@@ -38,6 +51,7 @@ interface Props {
     houseName: string;
     banner: BannerChoice;
     path: string;
+    portrait: PortraitChoice;
   }) => void;
   onContinue: () => void;
   hasSave: boolean;
@@ -54,9 +68,10 @@ export function MainMenu({ onCreate, onContinue, hasSave, isAuthed }: Props) {
   const [houseName, setHouseName] = useState("Sheatsley");
   const [banner, setBanner] = useState<BannerChoice>("Wolf");
   const [path, setPath] = useState("Forest & Beast");
+  const [portrait, setPortrait] = useState<PortraitChoice>("bearded-chief");
 
   const [step, setStep] = useState(1);
-  const TOTAL_STEPS = 5;
+  const TOTAL_STEPS = 6;
 
   if (screen === "menu") return (
     <div className="relative flex h-screen w-screen flex-col items-center justify-center overflow-hidden bg-[#080706]">
@@ -179,8 +194,31 @@ export function MainMenu({ onCreate, onContinue, hasSave, isAuthed }: Props) {
             </div>
           )}
 
-          {/* Step 3: Path */}
+          {/* Step 3: Portrait */}
           {step === 3 && (
+            <div className="mx-auto max-w-xl space-y-6">
+              <h2 className="text-center text-2xl font-bold text-[#eee4d0]">Choose Your Portrait</h2>
+              <p className="text-center text-[12px] text-[#8d8674]">This is the face of your dynasty's founder.</p>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {(Object.keys(PORTRAITS) as PortraitChoice[]).map(pk => {
+                  const pi = PORTRAITS[pk];
+                  return (
+                    <button key={pk} onClick={() => setPortrait(pk)}
+                      className={`rounded-2xl border p-3 text-center transition ${
+                        portrait === pk ? "border-[#c8a84e] bg-[#c8a84e]/10" : "border-white/8 bg-white/3 hover:bg-white/5"
+                      }`}>
+                      <img src={CREATION_PORTRAITS[pk]} alt={pi.label} className="mx-auto h-20 w-16 rounded-lg object-cover" />
+                      <p className="mt-2 text-[11px] font-bold">{pi.label}</p>
+                      <p className="mt-0.5 text-[10px] text-[#bbb5a0]">{pi.desc}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Step 4: Path */}
+          {step === 4 && (
             <div className="mx-auto max-w-xl space-y-6">
               <h2 className="text-center text-2xl font-bold text-[#eee4d0]">Choose Your Path</h2>
               <p className="text-center text-[12px] text-[#8d8674]">Your path shapes your starting skills, your people, and your legacy.</p>
@@ -199,8 +237,8 @@ export function MainMenu({ onCreate, onContinue, hasSave, isAuthed }: Props) {
             </div>
           )}
 
-          {/* Step 4: Banner */}
-          {step === 4 && (
+          {/* Step 5: Banner */}
+          {step === 5 && (
             <div className="mx-auto max-w-md space-y-6">
               <h2 className="text-center text-2xl font-bold text-[#eee4d0]">Choose Your Banner</h2>
               <p className="text-center text-[12px] text-[#8d8674]">Your sigil flies over every field, fort, and throne.</p>
@@ -221,15 +259,21 @@ export function MainMenu({ onCreate, onContinue, hasSave, isAuthed }: Props) {
             </div>
           )}
 
-          {/* Step 5: Confirm */}
-          {step === 5 && (
+          {/* Step 6: Confirm */}
+          {step === 6 && (
             <div className="mx-auto max-w-md space-y-6 text-center">
               <h2 className="text-2xl font-bold text-[#eee4d0]">The Chronicle Awaits</h2>
-              <div className="rounded-2xl border border-[#c8a84e]/20 bg-[#0e0d0b] p-6 text-left space-y-2">
-                <p className="text-[11px] uppercase tracking-wider text-[#c8a84e]">House {houseName}</p>
-                <p className="text-[13px] text-[#bbb5a0]">
-                  <strong className="text-[#eee4d0]">{gender === "male" ? "Chief" : "Chieftess"} {firstName} {houseName}</strong> of {region}
-                </p>
+              <div className="rounded-2xl border border-[#c8a84e]/20 bg-[#0e0d0b] p-6 text-left space-y-3">
+                <div className="flex items-center gap-4">
+                  <img src={CREATION_PORTRAITS[portrait]} alt="" className="h-20 w-16 rounded-lg border border-[#c8a84e]/25 object-cover" />
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wider text-[#c8a84e]">House {houseName}</p>
+                    <p className="text-[13px] text-[#bbb5a0]">
+                      <strong className="text-[#eee4d0]">{gender === "male" ? "Chief" : "Chieftess"} {firstName} {houseName}</strong>
+                    </p>
+                    <p className="text-[12px] text-[#8d8674]">{PORTRAITS[portrait].label} of {region}</p>
+                  </div>
+                </div>
                 <p className="text-[12px] text-[#8d8674]">Path: {path} · Banner: {BANNERS[banner].icon} {banner} · Difficulty: {REGIONS[region].difficulty}</p>
                 <p className="text-[11px] text-[#8d8674] italic">A small hamlet clings to the land, waiting for its first page.</p>
               </div>
@@ -245,7 +289,7 @@ export function MainMenu({ onCreate, onContinue, hasSave, isAuthed }: Props) {
             {step < TOTAL_STEPS ? (
               <button onClick={() => setStep(s => s + 1)} className="rounded-xl bg-[#c8a84e] px-8 py-2.5 text-[12px] font-bold text-[#1a1611] hover:brightness-110">Next →</button>
             ) : (
-              <button onClick={() => onCreate({ region, gender, firstName, houseName, banner, path })}
+              <button onClick={() => onCreate({ region, gender, firstName, houseName, banner, path, portrait })}
                 className="rounded-xl bg-[#c8a84e] px-10 py-3 text-[14px] font-bold text-[#1a1611] shadow-lg shadow-[#c8a84e]/20 hover:brightness-110 transition">
                 Begin the Chronicle
               </button>

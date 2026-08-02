@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { MainMenu, type RegionChoice, type BannerChoice, type GenderChoice } from "./main-menu";
+import { MainMenu, type RegionChoice, type BannerChoice, type GenderChoice, type PortraitChoice } from "./main-menu";
 import { IntroCinematic } from "./intro-cinematic";
 import { GameClient } from "./game-client";
 import { EndingScreen, type EndingData } from "./ending-screen";
@@ -24,6 +24,7 @@ export function GameShell() {
     houseName: string;
     banner: BannerChoice;
     path: string;
+    portrait: PortraitChoice;
   } | null>(null);
 
   // Ending data
@@ -49,7 +50,7 @@ export function GameShell() {
   // Menu → Creation → Intro → Playing
   const handleCreate = useCallback(async (data: {
     region: RegionChoice; gender: GenderChoice;
-    firstName: string; houseName: string; banner: BannerChoice; path: string;
+    firstName: string; houseName: string; banner: BannerChoice; path: string; portrait: PortraitChoice;
   }) => {
     setCharData(data);
     // Save initial empty world to cloud so account is "claimed"

@@ -2,9 +2,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BattleScreen, type BattleSetup, type BattleOutcome, type UnitType } from "./battle-screen";
 import { AuthModal, useAuth } from "@/components/auth-modal";
-import { SETTLEMENT_SVGS, PORTRAIT_SVGS } from "@/components/game-svgs";
+import { SETTLEMENT_SVGS, PORTRAIT_SVGS, CREATION_PORTRAITS } from "@/components/game-svgs";
 import { RealmMapCanvas } from "@/components/realm-map-canvas";
-import { type RegionChoice, type BannerChoice, type GenderChoice } from "./main-menu";
+import { type RegionChoice, type BannerChoice, type GenderChoice, type PortraitChoice } from "./main-menu";
 import { type EndingData } from "./ending-screen";
 
 /* ───────── types ───────── */
@@ -151,7 +151,11 @@ const seed = (n: number) => { const x = Math.sin(n * 999.13) * 10000; return x -
 const chRes = (r: Res, d: Partial<Res>): Res => { const n = { ...r }; for (const k of Object.keys(d) as RN[]) n[k] = Math.max(0, n[k] + (d[k] ?? 0)); return n; };
 const afford = (r: Res, c: Partial<Res>) => (Object.keys(c) as RN[]).every(k => r[k] >= (c[k] ?? 0));
 const fmtD = (d: Partial<Res>) => { const e = (Object.entries(d) as [RN, number][]).filter(([, v]) => v !== 0); return e.length ? e.map(([k, v]) => `${v > 0 ? "+" : ""}${Math.round(v)} ${k}`).join(", ") : "—"; };
-const portrait = (m: Family, i: number) => m.id === "mentor" ? PORTRAITS.mentor : m.role.includes("Chief") ? PORTRAITS.ruler : i % 2 === 0 ? PORTRAITS.heir : PORTRAITS.spouse;
+const portrait = (m: Family, i: number, rulerPortrait?: PortraitChoice) => {
+  if (m.id === "mentor") return PORTRAITS.mentor;
+  if (m.role.includes("Chief")) return rulerPortrait ? (CREATION_PORTRAITS[rulerPortrait] ?? PORTRAITS.ruler) : PORTRAITS.ruler;
+  return i % 2 === 0 ? PORTRAITS.heir : PORTRAITS.spouse;
+};
 const renown = (r: number) => r > 80 ? "Renowned" : r > 60 ? "Respected" : r > 40 ? "Known" : "Obscure";
 const sIcon = (t: SType, h: boolean) => h ? "♜" : t === "city" ? "🏛" : t === "town" ? "🏰" : t === "village" ? "🏠" : "🛖";
 const sImg = (t: SType, h: boolean) => h ? SETTLEMENT_SVGS.hamlet : t === "city" ? SETTLEMENT_SVGS.city : t === "town" ? SETTLEMENT_SVGS.town : SETTLEMENT_SVGS.village;
@@ -270,7 +274,7 @@ function genCitizens(settlements: Settlement[]): Citizen[] {
   return out;
 }
 
-type CharData = { region: RegionChoice; gender: GenderChoice; firstName: string; houseName: string; banner: BannerChoice; path: string };
+type CharData = { region: RegionChoice; gender: GenderChoice; firstName: string; houseName: string; banner: BannerChoice; path: string; portrait: PortraitChoice };
 
 const REGION_RES: Record<RegionChoice, Partial<Res> & { motto: string; difficulty: number }> = {
   "Forest Valley":     { food: 60, wood: 110, stone: 14, iron: 4, fish: 6, wool: 8, herbs: 28, leather: 16, motto: "Deep roots, strong timber", difficulty: 1 },
@@ -385,7 +389,7 @@ function recordFactionAction(rep: FactionReputation[], bid: string, action: Acti
 function getBaronyRep(rep: FactionReputation[], bid: string): FactionReputation | undefined { return rep.find(fr => fr.bid === bid); }
 
 /* ───────── component ───────── */
-export function GameClient({ charData, onEnding, onSave }: { charData?: { region: RegionChoice; gender: GenderChoice; firstName: string; houseName: string; banner: BannerChoice; path: string }; onEnding?: (data: EndingData) => void; onSave?: () => void }) {
+export function GameClient({ charData, onEnding, onSave }: { charData?: { region: RegionChoice; gender: GenderChoice; firstName: string; houseName: string; banner: BannerChoice; path: string; portrait: PortraitChoice }; onEnding?: (data: EndingData) => void; onSave?: () => void }) {
   const [g, setG] = useState<GS>(() => initGame(charData));
   const [mapReady, setMapReady] = useState(false);
   const [panel, setPanel] = useState<Panel>(null);
@@ -547,7 +551,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
                 return { ...m, age, status: "Dead" as const };
               }
               if (age === 16 && m.role === "Child of the House") {
-                toast = { title: "Come of Age", body: `${m.name} is ready for responsibility.`, portrait: portrait(m, 1) };
+                toast = { title: "Come of Age", body: `${m.name} is ready for responsibility.`, portrait: portrait(m, 1, charData?.portrait) };
                 extra.push(chron(year, season, `${m.name} Comes of Age`, `${m.name} turned sixteen.`, "hope"));
               }
               return { ...m, age };
@@ -562,7 +566,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
             const rr = family.find(m => m.id === ruler.id);
             if (rr?.status === "Dead") {
               const cand = family.filter(m => m.status === "Living" && m.id !== "mentor").sort((a, b) => b.age - a.age)[0];
-              if (cand) { ruler = { ...cand, role: "Chief of Hearthmere" }; family = family.map(m => m.id === cand.id ? ruler : m); const ph = prev.baronies[0]?.house ?? "House Sheatsley"; extra.unshift(chron(year, season, `${cand.name} Takes the Seat`, `${cand.name} rose to lead ${ph}.`, "glory")); toast = { title: "A New Chief", body: `${cand.name} now leads the House.`, portrait: portrait(cand, 0) }; }
+              if (cand) { ruler = { ...cand, role: "Chief of Hearthmere" }; family = family.map(m => m.id === cand.id ? ruler : m); const ph = prev.baronies[0]?.house ?? "House Sheatsley"; extra.unshift(chron(year, season, `${cand.name} Takes the Seat`, `${cand.name} rose to lead ${ph}.`, "glory")); toast = { title: "A New Chief", body: `${cand.name} now leads the House.`, portrait: portrait(cand, 0, charData?.portrait) }; }
             } else ruler = family.find(m => m.id === ruler.id) ?? ruler;
             prestige += 1;
           }
@@ -1377,8 +1381,8 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
             <button onClick={() => setPanel(null)} className="rounded-full bg-white/6 px-3 py-1 text-[11px] hover:bg-white/12">✕</button>
           </div>
 
-          {panel === "House" && <HousePanel g={g} living={living} center={center} home={home} setPanel={setPanel} houseName={charData?.houseName ?? "Sheatsley"} bannerIcon={charData?.banner ? { Lion: "🦁", Eagle: "🦅", Oak: "🌳", Wolf: "🐺", Crown: "♚" }[charData.banner] : "♜"} />}
-          {panel === "Family" && <div className="flex gap-3 overflow-x-auto pb-2">{g.family.map((m, i) => <div key={m.id} className={`w-32 shrink-0 rounded-2xl border p-3 text-center ${m.status === "Dead" ? "border-white/5 opacity-50" : "border-white/8 bg-white/3"}`}><img src={portrait(m, i)} alt={m.name} className="mx-auto h-16 w-14 rounded-lg object-cover" onError={(e) => { (e.target as HTMLImageElement).src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='64'%3E%3Crect fill='%233a2a1a' width='56' height='64' rx='8'/%3E%3Ctext x='28' y='42' text-anchor='middle' fill='%23c8a84e' font-size='24' font-family='sans-serif'%3E${encodeURIComponent(m.name.split(" ")[0][0])}%3C/text%3E%3C/svg%3E`; }} /><p className="mt-1 text-[12px] font-semibold">{m.name}</p><p className="text-[10px] text-[#bbb5a0]">{m.role}</p><p className="text-[10px] text-[#c8a84e]">{m.status === "Dead" ? "Deceased" : `Age ${m.age}`}</p></div>)}<div className="flex w-32 shrink-0 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 text-[11px] text-[#8d8674]"><span className="text-xl">?</span>continues…</div></div>}
+          {panel === "House" && <HousePanel g={g} living={living} center={center} home={home} setPanel={setPanel} houseName={charData?.houseName ?? "Sheatsley"} bannerIcon={charData?.banner ? { Lion: "🦁", Eagle: "🦅", Oak: "🌳", Wolf: "🐺", Crown: "♚" }[charData.banner] : "♜"} rulerPortrait={charData?.portrait} />}
+          {panel === "Family" && <div className="flex gap-3 overflow-x-auto pb-2">{g.family.map((m, i) => <div key={m.id} className={`w-32 shrink-0 rounded-2xl border p-3 text-center ${m.status === "Dead" ? "border-white/5 opacity-50" : "border-white/8 bg-white/3"}`}><img src={portrait(m, i, charData?.portrait)} alt={m.name} className="mx-auto h-16 w-14 rounded-lg object-cover" onError={(e) => { (e.target as HTMLImageElement).src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='64'%3E%3Crect fill='%233a2a1a' width='56' height='64' rx='8'/%3E%3Ctext x='28' y='42' text-anchor='middle' fill='%23c8a84e' font-size='24' font-family='sans-serif'%3E${encodeURIComponent(m.name.split(" ")[0][0])}%3C/text%3E%3C/svg%3E`; }} /><p className="mt-1 text-[12px] font-semibold">{m.name}</p><p className="text-[10px] text-[#bbb5a0]">{m.role}</p><p className="text-[10px] text-[#c8a84e]">{m.status === "Dead" ? "Deceased" : `Age ${m.age}`}</p></div>)}<div className="flex w-32 shrink-0 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 text-[11px] text-[#8d8674]"><span className="text-xl">?</span>continues…</div></div>}
           {panel === "Citizens" && <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{g.citizens.filter(c => c.sid === home.id).map(c => { const st = OCC_STYLE[c.occ]; return <button key={c.id} onClick={() => { pickC(c); center(home.x, home.y, 1.3); }} className="flex items-center gap-2 rounded-xl bg-white/3 px-3 py-2 text-left transition hover:bg-white/7"><span className="grid h-7 w-7 place-items-center rounded-full text-[11px]" style={{ background: st?.tunic }}>{st?.tool}</span><span><span className="block text-[12px] font-medium">{c.name}</span><span className="text-[10px] text-[#bbb5a0]">{c.occ} · {c.age}</span></span></button>; })}</div>}
           {panel === "Alerts" && <div className="grid gap-6 md:grid-cols-2"><div><h3 className="mb-2 text-[11px] uppercase tracking-wider text-[#c8a84e]">Alerts</h3><ul className="space-y-1 text-[12px]">{alerts.map(a => <li key={a} className="rounded-xl bg-white/3 px-3 py-2">• {a}</li>)}</ul></div><div><h3 className="mb-2 text-[11px] uppercase tracking-wider text-[#c8a84e]">Recent</h3><ul className="space-y-1 text-[12px]">{g.chronicle.slice(0, 7).map(e => <li key={e.id} className="rounded-xl bg-white/3 px-3 py-2"><strong className="text-[#c8a84e]">{e.title}</strong> <span className="text-[#bbb5a0]">{e.text}</span></li>)}</ul></div></div>}
           {panel === "Build" && <div>
@@ -1443,7 +1447,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
 }
 
 /* ───────── panels ───────── */
-function HousePanel({ g, living, center, home, setPanel, houseName, bannerIcon }: { g: GS; living: Family[]; center: (x: number, y: number, z?: number) => void; home: Settlement; setPanel: (p: Panel) => void; houseName: string; bannerIcon: string }) {
+function HousePanel({ g, living, center, home, setPanel, houseName, bannerIcon, rulerPortrait }: { g: GS; living: Family[]; center: (x: number, y: number, z?: number) => void; home: Settlement; setPanel: (p: Panel) => void; houseName: string; bannerIcon: string; rulerPortrait?: PortraitChoice }) {
   return (
     <div className="grid gap-6 md:grid-cols-[290px_1fr]">
       <div className="space-y-4">
@@ -1453,7 +1457,7 @@ function HousePanel({ g, living, center, home, setPanel, houseName, bannerIcon }
           <p><span className="text-[#8d8674]">Rank</span> {g.rank}</p><p><span className="text-[#8d8674]">Prestige</span> {g.prestige}</p>
           <p><span className="text-[#8d8674]">Allies</span> {g.alliances.length}</p><p><span className="text-[#8d8674]">Wars</span> {g.atWar.length}</p>
         </div>
-        <div className="flex gap-2">{living.slice(0, 4).map((m, i) => <div key={m.id} className="flex flex-col items-center"><img src={portrait(m, i)} alt={m.name} className="h-12 w-10 rounded-lg border border-[#c8a84e]/25 object-cover" onError={(e) => { (e.target as HTMLImageElement).src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='48'%3E%3Crect fill='%233a2a1a' width='40' height='48' rx='8'/%3E%3Ctext x='20' y='30' text-anchor='middle' fill='%23c8a84e' font-size='18' font-family='sans-serif'%3E${encodeURIComponent(m.name.split(" ")[0][0])}%3C/text%3E%3C/svg%3E`; }} /><span className="mt-0.5 max-w-12 truncate text-[9px]">{m.name.split(" ")[0]}</span></div>)}</div>
+        <div className="flex gap-2">{living.slice(0, 4).map((m, i) => <div key={m.id} className="flex flex-col items-center"><img src={portrait(m, i, rulerPortrait)} alt={m.name} className="h-12 w-10 rounded-lg border border-[#c8a84e]/25 object-cover" onError={(e) => { (e.target as HTMLImageElement).src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='48'%3E%3Crect fill='%233a2a1a' width='40' height='48' rx='8'/%3E%3Ctext x='20' y='30' text-anchor='middle' fill='%23c8a84e' font-size='18' font-family='sans-serif'%3E${encodeURIComponent(m.name.split(" ")[0][0])}%3C/text%3E%3C/svg%3E`; }} /><span className="mt-0.5 max-w-12 truncate text-[9px]">{m.name.split(" ")[0]}</span></div>)}</div>
         <div className="flex gap-1">{(["Family", "Citizens", "Alerts"] as const).map(p => <button key={p} onClick={() => setPanel(p)} className="flex-1 rounded-lg bg-white/6 py-1.5 text-[11px] font-semibold hover:bg-white/12">{p}</button>)}</div>
         <button onClick={() => center(home.x, home.y, 1.3)} className="w-full rounded-lg bg-[#c8a84e] py-2 text-[12px] font-semibold text-[#1a1611]">Zoom into Hearthmere</button>
       </div>
