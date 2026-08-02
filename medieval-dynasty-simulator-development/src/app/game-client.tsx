@@ -7,7 +7,7 @@ import { type EndingData } from "./ending-screen";
 
 /* ───────── types ───────── */
 type Season = "Spring" | "Summer" | "Autumn" | "Winter";
-type Panel = "House" | "Build" | "Training" | "Council" | "Resources" | "Chronicle" | "Family" | "Citizens" | "Alerts" | "Settlement" | "Barony" | "Villager" | "Trade" | "War" | "Realm" | null;
+type Panel = "House" | "Build" | "Training" | "Council" | "Resources" | "Chronicle" | "Family" | "Citizens" | "Alerts" | "Settlement" | "Barony" | "Villager" | "Trade" | "War" | "Realm" | "Crown" | null;
 type Path = "Forest & Beast" | "Iron" | "Scholar" | "Warrior" | "Sea" | "Land";
 type Region = "Northern Marches" | "Heartlands" | "Western Highlands" | "Eastern Coast" | "Southern Wilds";
 type SType = "hamlet" | "village" | "town" | "city";
@@ -25,7 +25,9 @@ interface EvtOpt { label: string; hint: string; result: string; res?: Partial<Re
 interface DecEvt { id: string; title: string; text: string; crisis: boolean; opts: EvtOpt[] }
 interface Caravan { id: string; tid: string; resource: RN; amount: number; days: number; total: number; silver: number }
 interface Alliance { bid: string; kind: "alliance" | "trade bloc" }
-interface Army { militia: number; archers: number; spearmen: number; knights: number; captains: string[]; training: number }
+interface Vassal { bid: string; title: string; loyalty: number; tribute: number }
+interface SuccessionCrisis { id: string; claimants: { name: string; age: number; support: number; traits: string[] }[]; resolved: boolean; year: number }
+interface Army { militia: number; archers: number; spearmen: number; knights: number; royalGuard: number; captains: string[]; training: number }
 
 interface Road { id: string; fromSid: string; toSid: string; level: number; traffic: number; decayed: boolean }
 interface Faction { id: string; name: string; goal: string; members: number; aggression: number; loyalty: number }
@@ -44,6 +46,8 @@ interface GS {
   roads: Road[]; factions: Faction[]; citizenMemories: MemoryObj[];
   demotions: number; battlesFought: number; lineagesBorn: number; peakRank: string;
   dynastyExtinct: boolean;
+  vassals: Vassal[]; successionCrisis: SuccessionCrisis | null;
+  civilWarActive: boolean;
 }
 
 /* ───────── world constants ───────── */
@@ -231,8 +235,9 @@ function initGame(): GS {
     selBid: home.bid, selSid: home.id, selCid: null, evt: null,
     toast: { title: "A New Chief Rises", body: "Press ▶ to let time flow across the Realm.", portrait: PORTRAITS.ruler },
     prices: { food: 2, wood: 3, stone: 4, iron: 8, coal: 6, fish: 3, wool: 4, leather: 6, herbs: 5, tools: 10, weapons: 15, medicine: 18, silver: 1 },
-    caravans: [], alliances: [], army: { militia: 8, archers: 3, spearmen: 2, knights: 0, captains: [], training: 12 }, atWar: [],
+    caravans: [], alliances: [], army: { militia: 8, archers: 3, spearmen: 2, knights: 0, royalGuard: 0, captains: [], training: 12 }, atWar: [],
     roads: [], factions: [], citizenMemories: [], demotions: 0, battlesFought: 0, lineagesBorn: 0, peakRank: "Hamlet", dynastyExtinct: false,
+    vassals: [], successionCrisis: null, civilWarActive: false,
   };
 }
 
@@ -402,6 +407,9 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
             }
           }
           seasonRoads = roads;
+          // ──── VASSAL TRIBUTE ────
+          const tributeSilver = prev.vassals.filter(v => v.loyalty > 25).reduce((s, v) => s + v.tribute, 0);
+          if (tributeSilver > 0) res = chRes(res, { silver: tributeSilver });
           const hungry = res.food < pop / 3;
           rep = { ...rep, trust: cl01(rep.trust + (hungry ? -4 : 1)), prosperity: cl01(rep.prosperity + (res.silver > 60 ? 2 : 0) + (hungry ? -5 : 1)), tradition: cl01(rep.tradition + (prev.buildings.some(b => b.id === "shrine") ? 1 : 0)) };
         }
@@ -425,6 +433,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
         const newRankIdx = (["Hamlet","Village","Town","City","Petty Barony","Small Barony","Great Barony","Regional Lord","King of the Realm"]).indexOf(rank);
         let demotions = prev.demotions;
         let dynastyExtinct = prev.dynastyExtinct;
+        let civilWarActive = prev.civilWarActive;
         if (newRankIdx < prevRankIdx) {
           demotions += 1;
           popCap = Math.max(60, Math.round(popCap * 0.7));
@@ -517,6 +526,66 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
         ng.dynastyExtinct = dynastyExtinct;
         ng.lineagesBorn = lineagesBorn;
 
+        // ──── CROWN ERA: SUCCESSION CRISIS ────
+        let successionCrisis = prev.successionCrisis;
+        if (rank === "King of the Realm" && !successionCrisis) {
+          const adultHeirs = family.filter(m => m.status === "Living" && m.id !== "mentor" && m.age >= 16);
+          if (adultHeirs.length >= 2 && Math.random() < 0.06 * step) {
+            successionCrisis = {
+              id: uid("cr"),
+              claimants: adultHeirs.slice(0, 4).map((h, i) => ({
+                name: h.name, age: h.age,
+                support: 20 + Math.round(seed(i * 7 + year) * 55),
+                traits: h.traits.slice(0, 2),
+              })),
+              resolved: false, year,
+            };
+            ng.chronicle = [chron(year, season, "A Crown Contested", `Multiple claimants vie for the throne. The court is divided.`, "warning"), ...ng.chronicle];
+          }
+        }
+        // If crisis resolved, apply effects
+        if (successionCrisis?.resolved && successionCrisis !== prev.successionCrisis) {
+          const winner = successionCrisis.claimants.reduce((a, b) => a.support > b.support ? a : b);
+          rep = { ...rep, respect: cl01(rep.respect - 5), trust: cl01(rep.trust - 8) };
+          const losers = successionCrisis.claimants.filter(c => c.name !== winner.name);
+          if (losers.length > 0 && Math.random() < 0.5) {
+            civilWarActive = true;
+            ng.chronicle = [chron(year, season, "Civil War Erupts", `${losers[0].name} raised a banner against the throne.`, "grief"), ...ng.chronicle];
+            ng.atWar = [...new Set([...ng.atWar, ...prev.baronies.filter(b => Math.random() < 0.3).map(b => b.id)])];
+          }
+          successionCrisis = null;
+        }
+        ng.successionCrisis = successionCrisis;
+
+        // ──── CROWN ERA: VASSAL LOYALTY & CIVIL WAR ────
+        let vassals = prev.vassals.map(v => ({ ...v }));
+        if (rank === "King of the Realm" || rank === "Regional Lord") {
+          for (const v of vassals) {
+            const barony = baronies.find(b => b.id === v.bid);
+            if (!barony) continue;
+            const relEffect = (barony.rel - 20) * 0.3;
+            const prosperityEffect = (rep.prosperity - 30) * 0.2;
+            v.loyalty = cl01(v.loyalty + relEffect + prosperityEffect + (Math.random() - 0.5) * 4 * step);
+            if (v.loyalty < 15 && Math.random() < 0.03 * step) {
+              vassals = vassals.filter(x => x.bid !== v.bid);
+              ng.chronicle = [chron(year, season, `${barony.house} Breaks Free`, `${barony.house} renounced vassalage to the Crown.`, "warning"), ...ng.chronicle];
+            }
+          }
+          // Civil war check
+          const rebels = vassals.filter(v => v.loyalty < 20);
+          if (rebels.length >= 3 && !civilWarActive) {
+            civilWarActive = true;
+            ng.chronicle = [chron(year, season, "The Realm Fractures", `${rebels.length} vassal houses rose in open rebellion.`, "grief"), ...ng.chronicle];
+            ng.atWar = [...new Set([...ng.atWar, ...rebels.map(r => r.bid)])];
+          }
+          if (civilWarActive && rebels.length === 0) {
+            civilWarActive = false;
+            ng.chronicle = [chron(year, season, "The Realm Restored", "The Crown has crushed the rebellion. Peace, for now.", "glory"), ...ng.chronicle];
+          }
+        }
+        ng.vassals = vassals;
+        ng.civilWarActive = civilWarActive;
+
         return ng;
       });
     }, 500);
@@ -594,7 +663,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
 
   const recruit = (u: UnitType) => {
     setConfirmReset(false);
-    const costs: Record<UnitType, Partial<Res>> = { militia: { food: 6, silver: 5 }, archers: { food: 8, wood: 5, silver: 9 }, spearmen: { food: 8, weapons: 1, silver: 8 }, knights: { food: 14, weapons: 3, silver: 25 } };
+    const costs: Record<UnitType, Partial<Res>> = { militia: { food: 6, silver: 5 }, archers: { food: 8, wood: 5, silver: 9 }, spearmen: { food: 8, weapons: 1, silver: 8 }, knights: { food: 14, weapons: 3, silver: 25 }, royalGuard: { food: 20, weapons: 5, silver: 40 } };
     setG(p => { if (!afford(p.res, costs[u])) { setNotice("Insufficient supplies."); return p; } setNotice(`Five ${u} joined the levy.`); return { ...p, res: chRes(p.res, Object.fromEntries(Object.entries(costs[u]).map(([k, v]) => [k, -(v ?? 0)])) as Partial<Res>), army: { ...p.army, [u]: p.army[u] + 5, training: cl01(p.army.training + 1) } }; });
   };
   const assignCpt = () => { setConfirmReset(false); setG(p => { const c = p.citizens.find(c2 => !p.army.captains.includes(c2.name)); if (!c) { setNotice("No free citizens to promote as captain."); return p; } setNotice(`${c.name} raised as captain.`); return { ...p, army: { ...p.army, captains: [...p.army.captains, c.name], training: cl01(p.army.training + 5) } }; }); };
@@ -608,13 +677,13 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
     setSpeed(0);
     setPanel(null);
     setG(p => ({ ...p, atWar: p.atWar.includes(selB.id) ? p.atWar : [...p.atWar, selB.id] }));
-    setBattleSetup({ enemyHouse: selB.house, enemyBanner: selB.banner, enemyColor: selB.color, kind, player: { militia: g.army.militia, archers: g.army.archers, spearmen: g.army.spearmen, knights: g.army.knights }, enemyMilitary: selB.mil, captains: g.army.captains });
+    setBattleSetup({ enemyHouse: selB.house, enemyBanner: selB.banner, enemyColor: selB.color, kind, player: { militia: g.army.militia, archers: g.army.archers, spearmen: g.army.spearmen, knights: g.army.knights, royalGuard: g.army.royalGuard }, enemyMilitary: selB.mil, captains: g.army.captains });
   };
 
   const endBattle = useCallback((o: BattleOutcome) => {
     setBattleSetup(null);
     setG(p => {
-      const army: Army = { ...p.army, militia: o.survivors.militia, archers: o.survivors.archers, spearmen: o.survivors.spearmen, knights: o.survivors.knights };
+      const army: Army = { ...p.army, militia: o.survivors.militia, archers: o.survivors.archers, spearmen: o.survivors.spearmen, knights: o.survivors.knights, royalGuard: o.survivors.royalGuard };
       if (o.withdrew) { setNotice("Your host withdrew from the field."); return { ...p, army, battlesFought: p.battlesFought + 1, chronicle: [chron(p.year, p.season, "A Withdrawal", `The host retreated from ${selB.name}.`, "grief"), ...p.chronicle] }; }
       if (o.victory) {
         setNotice(`Victory over ${selB.house}!`);
@@ -624,6 +693,33 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
       return { ...p, army, prestige: Math.max(0, p.prestige - 6), battlesFought: p.battlesFought + 1, rep: { ...p.rep, respect: cl01(p.rep.respect - 5) }, chronicle: [chron(p.year, p.season, "A Battle Lost", `The host was shattered before ${selB.name}.`, "grief"), ...p.chronicle] };
     });
   }, [selB]);
+
+  /* ── Crown actions ── */
+  const grantTitle = (bid: string) => setG(p => {
+    const barony = p.baronies.find(b => b.id === bid);
+    if (!barony || p.rank !== "King of the Realm") { setNotice("Only the Crown may grant titles."); return p; }
+    if (p.vassals.some(v => v.bid === bid)) { setNotice(`${barony.house} already serves the Crown.`); return p; }
+    if (p.prestige < 15) { setNotice("The Crown needs 15 prestige to bestow a title."); return p; }
+    setNotice(`${barony.house} now kneels to the Crown.`);
+    return { ...p, prestige: p.prestige - 15, vassals: [...p.vassals, { bid, title: `Lord of ${barony.name}`, loyalty: 55 + Math.round(barony.rel * 0.4), tribute: Math.round(barony.eco * 0.3) }], chronicle: [chron(p.year, p.season, "Title Bestowed", `${barony.house} was granted vassalage under the Crown.`, "glory"), ...p.chronicle] };
+  });
+
+  const resolveCrownCrisis = (claimantIdx: number) => setG(p => {
+    if (!p.successionCrisis) return p;
+    const resolved = { ...p.successionCrisis, resolved: true, claimants: p.successionCrisis.claimants.map((c, i) => ({
+      ...c, support: i === claimantIdx ? c.support + 30 : c.support - 10,
+    })) };
+    const winner = resolved.claimants[claimantIdx];
+    setNotice(`${winner.name} is acclaimed by the court.`);
+    return { ...p, successionCrisis: { ...resolved, resolved: true }, prestige: p.prestige + 5, chronicle: [chron(p.year, p.season, "The Crown Resolved", `${winner.name} was named the rightful heir by royal decree.`, "glory"), ...p.chronicle] };
+  });
+
+  const recruitRoyalGuard = () => setG(p => {
+    if (p.rank !== "King of the Realm" && p.rank !== "Regional Lord") { setNotice("Only the Crown or a Regional Lord may raise royal guards."); return p; }
+    if (!afford(p.res, { food: 20, weapons: 5, silver: 40 })) { setNotice("Need food, weapons and silver for royal guards."); return p; }
+    setNotice("Five royal guards sworn to the Crown.");
+    return { ...p, res: chRes(p.res, { food: -20, weapons: -5, silver: -40 }), prestige: p.prestige + 4, army: { ...p.army, royalGuard: p.army.royalGuard + 5 }, chronicle: [chron(p.year, p.season, "Royal Guard Sworn", "Elite defenders took the oath beneath the banner.", "glory"), ...p.chronicle] };
+  });
 
   const saveGame = async () => {
     setConfirmReset(false);
@@ -934,6 +1030,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
 
       {/* ════ DOCK ════ */}
       <nav data-ui="1" className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-0.5 rounded-2xl border border-white/8 bg-[#0e0d0b]/90 p-1.5 shadow-[0_16px_50px_rgba(0,0,0,.55)] backdrop-blur-2xl">
+        {(g.rank === "King of the Realm" || g.rank === "Regional Lord") && <button onClick={() => toggle("Crown")} className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[12px] font-semibold transition ${panel === "Crown" ? "bg-[#c8a84e] text-[#1a1611]" : "bg-amber-900/60 text-amber-200 hover:bg-amber-800/60"}`}><span>♚</span>Crown</button>}
         {([["Build","🏗"],["Training","⚔️"],["Council","👑"],["Trade","⚖️"],["War","🗡️"],["Resources","📦"],["Chronicle","📖"]] as const).map(([id, ic]) => (
           <button key={id} onClick={() => toggle(id)} className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[12px] font-semibold transition ${panel === id ? "bg-[#c8a84e] text-[#1a1611]" : "hover:bg-white/8"}`}><span>{ic}</span>{id}</button>
         ))}
@@ -986,10 +1083,11 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           {panel === "Chronicle" && <div><input value={cSearch} onChange={e => setCSearch(e.target.value)} placeholder="Search the Chronicle…" className="mb-3 w-full rounded-full border border-white/8 bg-white/4 px-4 py-2 text-[12px] outline-none placeholder:text-white/25 focus:border-[#c8a84e]/40" /><div className="mb-2 flex flex-wrap gap-1">{(["all","hope","glory","grief","warning","trade","faith"] as const).map(tone => <button key={tone} onClick={() => setCTone(tone)} className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition ${cTone === tone ? "bg-[#c8a84e] text-[#1a1611]" : "bg-white/6 hover:bg-white/10"}`}>{tone === "all" ? "All" : tone}</button>)}</div><div className="space-y-1.5 text-[12px]">{filtChron.slice(0, 200).map(e => <div key={e.id} className="rounded-xl bg-white/3 px-3 py-2"><span className="mr-2 text-[10px] text-[#8d8674]">Y{e.year} {e.season}</span><strong className="text-[#c8a84e]">{e.title}</strong> <span className="text-[#bbb5a0]">{e.text}</span></div>)}</div></div>}
           {panel === "Realm" && <RealmPanel g={g} search={rSearch} setSearch={setRSearch} pickB={pickB} center={center} />}
           {panel === "Trade" && <TradePanel g={g} selB={selB} send={sendCaravan} dip={dipAction} />}
-          {panel === "War" && <WarPanel g={g} selB={selB} recruit={recruit} assignCpt={assignCpt} raid={raid} start={startBattle} dip={dipAction} />}
+          {panel === "War" && <WarPanel g={g} selB={selB} recruit={recruit} recruitRoyalGuard={recruitRoyalGuard} assignCpt={assignCpt} raid={raid} start={startBattle} dip={dipAction} />}
           {panel === "Settlement" && <SettPanel s={selS} b={selB} g={g} center={center} setPanel={setPanel} />}
           {panel === "Barony" && <BarPanel b={selB} g={g} center={center} pickS={pickS} setPanel={setPanel} />}
           {panel === "Villager" && selC && <VillPanel c={selC} g={g} center={center} tab={cTab} setTab={setCTab} />}
+          {panel === "Crown" && <CrownPanel g={g} grantTitle={grantTitle} resolveCrisis={resolveCrownCrisis} recruitRoyalGuard={recruitRoyalGuard} />}
         </div>
       )}
 
@@ -1114,16 +1212,16 @@ function TradePanel({ g, selB, send, dip }: { g: GS; selB: Barony; send: (r: RN)
   );
 }
 
-function WarPanel({ g, selB, recruit, assignCpt, raid, start, dip }: { g: GS; selB: Barony; recruit: (u: UnitType) => void; assignCpt: () => void; raid: () => void; start: (k: "attack" | "siege") => void; dip: (k: "peace") => void }) {
+function WarPanel({ g, selB, recruit, recruitRoyalGuard, assignCpt, raid, start, dip }: { g: GS; selB: Barony; recruit: (u: UnitType) => void; recruitRoyalGuard: () => void; assignCpt: () => void; raid: () => void; start: (k: "attack" | "siege") => void; dip: (k: "peace") => void }) {
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <div>
         <p className="mb-2 text-[10px] uppercase tracking-wider text-red-300">The Hearthmere Host</p>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {(["militia", "archers", "spearmen", "knights"] as UnitType[]).map(u => (
-            <button key={u} onClick={() => recruit(u)} className="rounded-2xl bg-white/3 p-3 text-left transition hover:bg-white/7">
-              <p className="text-lg">{u === "militia" ? "🗡" : u === "archers" ? "🏹" : u === "spearmen" ? "🔱" : "♞"}</p>
-              <p className="text-lg font-bold">{g.army[u]}</p><p className="text-[10px] capitalize text-[#bbb5a0]">{u}</p>
+          {(["militia", "archers", "spearmen", "knights", "royalGuard"] as UnitType[]).map(u => (
+            <button key={u} onClick={() => u === "royalGuard" ? recruitRoyalGuard() : recruit(u)} className="rounded-2xl bg-white/3 p-3 text-left transition hover:bg-white/7">
+              <p className="text-lg">{u === "militia" ? "🗡" : u === "archers" ? "🏹" : u === "spearmen" ? "🔱" : u === "royalGuard" ? "♚" : "♞"}</p>
+              <p className="text-lg font-bold">{g.army[u]}</p><p className="text-[10px] capitalize text-[#bbb5a0]">{u === "royalGuard" ? "Royal Guard" : u}</p>
               <p className="mt-1 text-[9px] text-[#c8a84e]">recruit +5</p>
             </button>
           ))}
@@ -1221,6 +1319,98 @@ function VillPanel({ c, g, center, tab, setTab }: { c: Citizen; g: GS; center: (
         {tab === "Info" && <p className="text-[12px] text-[#bbb5a0]">A {c.occ} of {s?.name}, working the same rounds each day. {c.traits.join(" and ")} by nature.</p>}
         {tab === "Skills" && <div className="space-y-1">{(Object.entries(c.skills) as [string, number][]).map(([k, v]) => <Meter key={k} l={k} v={v * 10} />)}</div>}
         {tab === "Memories" && <ul className="list-disc space-y-1 pl-4 text-[12px] text-[#bbb5a0]">{c.memories.map(m => <li key={m}>{m}</li>)}</ul>}
+      </div>
+    </div>
+  );
+}
+
+function CrownPanel({ g, grantTitle, resolveCrisis, recruitRoyalGuard }: { g: GS; grantTitle: (bid: string) => void; resolveCrisis: (idx: number) => void; recruitRoyalGuard: () => void }) {
+  const crisis = g.successionCrisis;
+  const isCrown = g.rank === "King of the Realm" || g.rank === "Regional Lord";
+  if (!isCrown) return <p className="text-[12px] text-[#8d8674]">Rise to Regional Lord or King of the Realm to access the Crown court.</p>;
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-2">
+      {/* Succession Crisis */}
+      {crisis && (
+        <div className="rounded-2xl border border-amber-400/20 bg-amber-950/15 p-5">
+          <p className="text-[10px] uppercase tracking-wider text-amber-300">Succession Crisis</p>
+          <h3 className="mt-1 text-[14px] font-bold text-[#eee4d0]">The Crown is Contested</h3>
+          <p className="mt-1 text-[11px] text-[#bbb5a0]">Year {crisis.year} — multiple claimants vie for the throne.</p>
+          <div className="mt-3 space-y-2">
+            {crisis.claimants.map((c, i) => (
+              <div key={c.name} className="flex items-center justify-between rounded-xl bg-white/4 px-4 py-3">
+                <div>
+                  <p className="text-[13px] font-semibold">{c.name}</p>
+                  <p className="text-[10px] text-[#8d8674]">Age {c.age} · {c.traits.join(", ")}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] text-[#c8a84e]">{c.support}% support</span>
+                  {!crisis.resolved && (
+                    <button onClick={() => resolveCrisis(i)} className="rounded-lg bg-[#c8a84e] px-3 py-1.5 text-[11px] font-semibold text-[#1a1611] hover:brightness-110">Acclaim</button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Vassals */}
+      <div>
+        <div className="flex items-center justify-between">
+          <p className="text-[10px] uppercase tracking-wider text-[#8d8674]">Vassals ({g.vassals.length})</p>
+          <select onChange={e => { if (e.target.value) grantTitle(e.target.value); e.target.value = ""; }}
+            className="rounded-lg border border-white/8 bg-white/4 px-2 py-1 text-[10px] outline-none">
+            <option value="">Grant title (15 prestige)…</option>
+            {g.baronies.filter(b => b.house !== "House Sheatsley" && !g.vassals.some(v => v.bid === b.id)).slice(0, 20).map(b => (
+              <option key={b.id} value={b.id}>{b.house} · relations {b.rel}</option>
+            ))}
+          </select>
+        </div>
+        {g.vassals.length === 0 ? (
+          <p className="mt-2 text-[11px] text-[#bbb5a0]">No houses kneel to the Crown yet. Bestow titles to bind baronies to your rule.</p>
+        ) : (
+          <div className="mt-2 space-y-1.5">
+            {g.vassals.map(v => {
+              const barony = g.baronies.find(b => b.id === v.bid);
+              return (
+                <div key={v.bid} className={`flex items-center justify-between rounded-xl px-3 py-2 ${v.loyalty < 25 ? "bg-red-950/20" : "bg-white/3"}`}>
+                  <div>
+                    <p className="text-[12px] font-semibold">{barony?.house ?? v.bid}</p>
+                    <p className="text-[10px] text-[#bbb5a0]">{v.title} · tribute {v.tribute}🪙/season</p>
+                  </div>
+                  <div className="text-right">
+                    <span className={`text-[11px] font-bold ${v.loyalty > 60 ? "text-emerald-400" : v.loyalty > 30 ? "text-[#c8a84e]" : "text-red-400"}`}>{v.loyalty}% loyal</span>
+                    {g.civilWarActive && v.loyalty < 25 && <span className="ml-1 text-[9px] text-red-400">⚔</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {g.civilWarActive && (
+          <div className="mt-3 rounded-2xl border border-red-400/20 bg-red-950/15 p-4">
+            <p className="text-[11px] font-semibold text-red-300">⚔ Continental Civil War</p>
+            <p className="mt-1 text-[10px] text-[#bbb5a0]">The Realm burns. Crush the rebels or negotiate peace to restore order.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Royal Guard */}
+      <div className="rounded-2xl border border-white/6 bg-white/3 p-4">
+        <p className="text-[10px] uppercase tracking-wider text-[#8d8674]">Royal Guard</p>
+        <div className="mt-2 flex items-center justify-between">
+          <div>
+            <p className="text-xl font-bold tabular-nums">{g.army.royalGuard}</p>
+            <p className="text-[10px] text-[#bbb5a0]">Elite defenders of the Crown</p>
+          </div>
+          <button onClick={recruitRoyalGuard} className="rounded-xl bg-amber-800/70 px-4 py-2 text-[11px] font-semibold text-amber-100 hover:bg-amber-700/70">
+            Recruit +5
+          </button>
+        </div>
+        <p className="mt-2 text-[9px] text-[#8d8674]">Royal guards fight with +50% damage in battles. Cost: 20 food, 5 weapons, 40 silver.</p>
       </div>
     </div>
   );

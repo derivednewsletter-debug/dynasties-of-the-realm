@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-export type UnitType = "militia" | "archers" | "spearmen" | "knights";
+export type UnitType = "militia" | "archers" | "spearmen" | "knights" | "royalGuard";
 
 export interface BattleSetup {
   enemyHouse: string;
@@ -41,6 +41,7 @@ const STATS: Record<UnitType, { speed: number; range: number; dps: number; icon:
   spearmen: { speed: 34, range: 26,  dps: 3.0, icon: "🔱", label: "Spearmen", color: "#6d8450" },
   archers:  { speed: 32, range: 230, dps: 2.1, icon: "🏹", label: "Archers",  color: "#4f7f96" },
   knights:  { speed: 76, range: 22,  dps: 4.8, icon: "♞", label: "Knights",  color: "#a2503f" },
+  royalGuard: { speed: 56, range: 18, dps: 7.2, icon: "♚", label: "Royal Guard", color: "#c8a84e" },
 };
 
 const FORESTS = [
@@ -62,7 +63,7 @@ function onHill(x: number, y: number) { return inCircle(x, y, HILL); }
 
 function makeSquads(setup: BattleSetup): Squad[] {
   const out: Squad[] = [];
-  const types: UnitType[] = ["militia", "spearmen", "archers", "knights"];
+  const types: UnitType[] = ["militia", "spearmen", "archers", "knights", "royalGuard"];
 
   // player squads
   const pSlots: { type: UnitType; men: number }[] = [];
@@ -131,7 +132,7 @@ export function BattleScreen({ setup, onEnd }: { setup: BattleSetup; onEnd: (o: 
   const finish = useCallback((victory: boolean, withdrew: boolean) => {
     if (ended.current) return;
     ended.current = true;
-    const survivors: Record<UnitType, number> = { militia: 0, archers: 0, spearmen: 0, knights: 0 };
+    const survivors: Record<UnitType, number> = { militia: 0, archers: 0, spearmen: 0, knights: 0, royalGuard: 0 };
     for (const s of squadsRef.current) if (s.side === "p" && s.men > 0) survivors[s.type] += Math.round(s.men);
     onEnd({ victory, withdrew, survivors, enemyKilled: Math.round(enemyKilled.current) });
   }, [onEnd]);
