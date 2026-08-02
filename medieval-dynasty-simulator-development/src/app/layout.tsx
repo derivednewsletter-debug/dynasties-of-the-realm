@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Dynasties of the Realm",
-  description: "A living medieval dynasty simulator where House Sheatsley writes history across centuries.",
+  description: "A living medieval dynasty simulator where your house writes history across centuries.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
