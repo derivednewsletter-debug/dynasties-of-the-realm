@@ -4,7 +4,9 @@
  */
 
 function svgUri(svg: string): string {
-  return `data:image/svg+xml;base64,${btoa(svg)}`;
+  const bytes = new TextEncoder().encode(svg);
+  const binary = Array.from(bytes, b => String.fromCharCode(b)).join("");
+  return `data:image/svg+xml;base64,${btoa(binary)}`;
 }
 
 /* ───── REALM MAP ───── */
