@@ -2,9 +2,18 @@
 
 :root {
   color-scheme: dark;
+  /* ── design tokens ── */
   --gold: #c8a84e;
+  --gold-strong: #e3c76e;
+  --ink: #eee4d0;
+  --ink-muted: #bbb5a0;
+  --ink-faint: #8d8674;
   --panel: rgba(14, 12, 10, 0.92);
+  --panel-solid: #0e0d0b;
   --panel-border: rgba(200, 168, 78, 0.16);
+  --card: rgba(255, 255, 255, 0.03);
+  --hairline: rgba(255, 255, 255, 0.08);
+  --shadow-pop: 0 24px 80px rgba(0, 0, 0, 0.65);
 }
 
 * { box-sizing: border-box; }
@@ -22,9 +31,18 @@ button, input { font: inherit; }
 button { cursor: pointer; }
 ::selection { background: var(--gold); color: #1a1611; }
 
+/* ── visible keyboard focus (accessibility + studio polish) ── */
+:where(button, [role="button"], a, input, textarea, select, summary):focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+
+html { scrollbar-width: thin; scrollbar-color: rgba(200, 168, 78, 0.28) transparent; }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(200, 168, 78, 0.28); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(200, 168, 78, 0.45); }
 
 .ck-panel {
   background: var(--panel);
@@ -33,10 +51,13 @@ button { cursor: pointer; }
   -webkit-backdrop-filter: blur(24px);
 }
 
-.drawer { animation: drawer-up 0.22s cubic-bezier(0.2, 0.9, 0.3, 1); }
-@keyframes drawer-up {
-  from { opacity: 0; transform: translateX(-50%) translateY(18px); }
+/* ── Panel slide-up animation ── */
+@keyframes panelSlideUp {
+  from { opacity: 0; transform: translateX(-50%) translateY(20px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+.drawer {
+  animation: panelSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* ═══ villagers: CSS orbit so they walk the outer streets, never over rooftops ═══ */
@@ -134,15 +155,6 @@ button { cursor: pointer; }
   100% { transform: translateX(100%); }
 }
 
-/* ── Panel slide-up animation ── */
-@keyframes panelSlideUp {
-  from { opacity: 0; transform: translateX(-50%) translateY(20px); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-}
-.drawer {
-  animation: panelSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
 /* ── Toast slide-in ── */
 @keyframes toastIn {
   from { opacity: 0; transform: translateY(12px) scale(0.95); }
@@ -218,6 +230,16 @@ button { cursor: pointer; }
   nav button {
     padding: 0.375rem 0.5rem !important;
     font-size: 10px !important;
+  }
+}
+
+/* ── Respect users who prefer less motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

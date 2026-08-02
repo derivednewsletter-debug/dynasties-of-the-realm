@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useCallback } from "react";
+import { memo, useEffect, useRef, useCallback } from "react";
 
 const W = 15000, H = 10000;
 
@@ -121,10 +121,22 @@ function drawWarZones(ctx: CanvasRenderingContext2D, atWar: string[], baronies: 
     ctx.beginPath();
     ctx.arc(b.x, b.y, 200, 0, Math.PI * 2);
     ctx.fill();
-    ctx.font = "16px serif";
-    ctx.fillStyle = `rgba(220,80,50,${pulse * 2})`;
-    ctx.textAlign = "center";
-    ctx.fillText("⚔", b.x, b.y - 180);
+    ctx.strokeStyle = `rgba(220,80,50,${pulse * 2})`;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(b.x - 9, b.y - 189);
+    ctx.lineTo(b.x + 9, b.y - 171);
+    ctx.moveTo(b.x - 9, b.y - 171);
+    ctx.lineTo(b.x + 9, b.y - 189);
+    ctx.stroke();
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(b.x - 4, b.y - 184);
+    ctx.lineTo(b.x + 4, b.y - 176);
+    ctx.moveTo(b.x + 4, b.y - 184);
+    ctx.lineTo(b.x - 4, b.y - 176);
+    ctx.stroke();
   }
 }
 
@@ -369,19 +381,30 @@ function drawFogOfWar(ctx: CanvasRenderingContext2D, exploredHexes: Record<strin
   }
 }
 
-export function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes, season }: RealmMapCanvasProps) {
+export const RealmMapCanvas = memo(function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes, season }: RealmMapCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef(0);
   const stateRef = useRef({ atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes, season });
-  stateRef.current = { atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes, season };
   const lastFrameRef = useRef(0);
   const settMapRef = useRef(new Map<string, { x: number; y: number }>());
-  // Recreate settMap when settlements length or first item changes (avoids stale refs)
   const prevSettLenRef = useRef(settlements.length);
-  if (prevSettLenRef.current !== settlements.length || (settlements.length > 0 && !settMapRef.current.has(settlements[0].id))) {
-    prevSettLenRef.current = settlements.length;
-    settMapRef.current = new Map(settlements.map(ss => [ss.id, ss]));
-  }
+
+  // Offscreen layer holding the static (non-animated) viewport: hex grid, fog,
+  // decorations, borders, roads, compass, banner. Rebuilt only when the camera
+  // moves by >= 1 hex, the viewport resizes, or the world signature changes.
+  const staticCacheRef = useRef<{ key: string; canvas: HTMLCanvasElement | null; ctx: CanvasRenderingContext2D | null; w: number; h: number }>({ key: "", canvas: null, ctx: null, w: 0, h: 0 });
+
+  const staticKey = useCallback((s: typeof stateRef.current, vw: number, vh: number, dpr: number) => {
+    let k = `${Math.round(s.camX / 120)}|${Math.round(s.camY / 138.56)}|${s.zoom.toFixed(3)}|${Math.round(vw)}x${Math.round(vh)}@${dpr}`;
+    k += "|B" + s.baronies.map(b => `${b.id}@${b.x.toFixed(0)},${b.y.toFixed(0)},${b.rel.toFixed(0)},${b.color},${s.atWar.includes(b.id) ? 1 : 0}`).join(";");
+    k += "|R" + s.roads.map(r => `${r.fromSid}-${r.toSid}-${r.level}-${r.decayed ? 1 : 0}`).join(";");
+    k += "|S" + s.settlements.map(ss => `${ss.id}@${ss.x.toFixed(0)},${ss.y.toFixed(0)}`).join(";");
+    let eh = 0;
+    let eCount = 0;
+    if (s.exploredHexes) for (const e in s.exploredHexes) { eh = (eh * 31 + s.exploredHexes[e]) | 0; eCount++; }
+    k += `|E${eCount}:${eh}`;
+    return k;
+  }, []);
 
   const drawFrame = useCallback(() => {
     const canvas = canvasRef.current;
@@ -398,6 +421,12 @@ export function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY
     const rect = canvas.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
 
+    // Recreate settMap when settlements length or first item changes (ref-safe here in rAF)
+    if (prevSettLenRef.current !== s.settlements.length || (s.settlements.length > 0 && !settMapRef.current.has(s.settlements[0].id))) {
+      prevSettLenRef.current = s.settlements.length;
+      settMapRef.current = new Map(s.settlements.map(ss => [ss.id, ss]));
+    }
+
     const needsResize = canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr);
     if (needsResize) {
       canvas.width = Math.round(rect.width * dpr);
@@ -410,70 +439,133 @@ export function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY
 
     if (s.staticMode) {
       // Static mode: scale entire world into minimap canvas
+      const key = staticKey(s, rect.width, rect.height, dpr);
+      let cache = staticCacheRef.current;
+      const cw = Math.round(rect.width * dpr), ch = Math.round(rect.height * dpr);
+      const fresh = cache.canvas && cache.key === key && cache.w === cw && cache.h === ch;
+      if (!fresh) {
+        if (!cache.canvas) {
+          cache.canvas = document.createElement("canvas");
+          cache.ctx = cache.canvas.getContext("2d");
+        }
+        cache.w = cw;
+        cache.h = ch;
+        if (cache.canvas.width !== cw) cache.canvas.width = cw;
+        if (cache.canvas.height !== ch) cache.canvas.height = ch;
+        const cctx = cache.ctx;
+        if (cctx) {
+          const scale = Math.min(rect.width / W, rect.height / H);
+          cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          cctx.clearRect(0, 0, rect.width, rect.height);
+          cctx.save();
+          cctx.scale(scale, scale);
+          cctx.fillStyle = "#d4caa5";
+          cctx.fillRect(0, 0, W, H);
+          const edgeGrad = cctx.createRadialGradient(W / 2, H / 2, 2000, W / 2, H / 2, 8000);
+          edgeGrad.addColorStop(0, "rgba(212,202,165,0)");
+          edgeGrad.addColorStop(1, "rgba(160,150,120,0.3)");
+          cctx.fillStyle = edgeGrad;
+          cctx.fillRect(0, 0, W, H);
+          // Skip hex grid in staticMode — too wasteful at minimap scale
+          drawDecorations(cctx);
+          drawRegionOverlays(cctx);
+          drawBaronyBorders(cctx, s.baronies, s.atWar);
+          drawRoads(cctx, s.roads, settMapRef.current);
+          // Simplified fog for minimap: uniform dim overlay
+          if (s.exploredHexes && Object.keys(s.exploredHexes).length > 0) {
+            cctx.fillStyle = "rgba(20,18,15,0.25)";
+            cctx.fillRect(0, 0, W, H);
+          }
+          cctx.restore();
+        }
+        cache.key = key;
+      }
+      if (cache.canvas) ctx.drawImage(cache.canvas, 0, 0, rect.width, rect.height);
+
+      // Animated war-zone pulses on top (rare)
+      ctx.save();
       const scale = Math.min(rect.width / W, rect.height / H);
       ctx.scale(scale, scale);
-      ctx.fillStyle = "#d4caa5";
-      ctx.fillRect(0, 0, W, H);
-      const edgeGrad = ctx.createRadialGradient(W / 2, H / 2, 2000, W / 2, H / 2, 8000);
-      edgeGrad.addColorStop(0, "rgba(212,202,165,0)");
-      edgeGrad.addColorStop(1, "rgba(160,150,120,0.3)");
-      ctx.fillStyle = edgeGrad;
-      ctx.fillRect(0, 0, W, H);
-      // Skip hex grid in staticMode — too wasteful at minimap scale
-      drawDecorations(ctx);
-      drawRegionOverlays(ctx);
-      drawBaronyBorders(ctx, s.baronies, s.atWar);
-      drawRoads(ctx, s.roads, settMapRef.current);
       drawWarZones(ctx, s.atWar, s.baronies);
-      // Simplified fog for minimap: uniform dim overlay
-      if (s.exploredHexes && Object.keys(s.exploredHexes).length > 0) {
-        ctx.fillStyle = "rgba(20,18,15,0.25)";
-        ctx.fillRect(0, 0, W, H);
-      }
+      ctx.restore();
     } else {
       // Dynamic mode: camera-transformed
-      ctx.translate(-s.camX * s.zoom, -s.camY * s.zoom);
-      ctx.scale(s.zoom, s.zoom);
       const vw = rect.width / s.zoom;
       const vh = rect.height / s.zoom;
 
-      ctx.fillStyle = "#d4caa5";
-      ctx.fillRect(0, 0, W, H);
-      const edgeGrad = ctx.createRadialGradient(W / 2, H / 2, 2000, W / 2, H / 2, 8000);
-      edgeGrad.addColorStop(0, "rgba(212,202,165,0)");
-      edgeGrad.addColorStop(1, "rgba(160,150,120,0.3)");
-      ctx.fillStyle = edgeGrad;
-      ctx.fillRect(0, 0, W, H);
+      // Static layer (hex grid, fog, borders, roads, compass, banner) is cached per
+      // viewport + world-signature so idle frames skip the expensive path/fill work.
+      const key = staticKey(s, vw, vh, dpr);
+      let cache = staticCacheRef.current;
+      const cw = Math.round(rect.width * dpr), ch = Math.round(rect.height * dpr);
+      const fresh = cache.canvas && cache.key === key && cache.w === cw && cache.h === ch;
+      if (!fresh) {
+        if (!cache.canvas) {
+          cache.canvas = document.createElement("canvas");
+          cache.ctx = cache.canvas.getContext("2d");
+        }
+        cache.w = cw;
+        cache.h = ch;
+        if (cache.canvas.width !== cw) cache.canvas.width = cw;
+        if (cache.canvas.height !== ch) cache.canvas.height = ch;
+        const cctx = cache.ctx;
+        if (cctx) {
+          cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          cctx.clearRect(0, 0, rect.width, rect.height);
+          cctx.save();
+          cctx.translate(-s.camX * s.zoom, -s.camY * s.zoom);
+          cctx.scale(s.zoom, s.zoom);
 
-      drawHexGrid(ctx, s.camX, s.camY, s.zoom, vw, vh);
-      drawDecorations(ctx);
-      drawRegionOverlays(ctx);
-      drawBaronyBorders(ctx, s.baronies, s.atWar);
-      drawRoads(ctx, s.roads, settMapRef.current);
-      drawWarZones(ctx, s.atWar, s.baronies);
-      // Fog of war overlay
-      if (s.exploredHexes && Object.keys(s.exploredHexes).length > 0) {
-        drawFogOfWar(ctx, s.exploredHexes, s.camX, s.camY, s.zoom, vw, vh);
+          cctx.fillStyle = "#d4caa5";
+          cctx.fillRect(0, 0, W, H);
+          const edgeGrad = cctx.createRadialGradient(W / 2, H / 2, 2000, W / 2, H / 2, 8000);
+          edgeGrad.addColorStop(0, "rgba(212,202,165,0)");
+          edgeGrad.addColorStop(1, "rgba(160,150,120,0.3)");
+          cctx.fillStyle = edgeGrad;
+          cctx.fillRect(0, 0, W, H);
+
+          drawHexGrid(cctx, s.camX, s.camY, s.zoom, vw, vh);
+          drawDecorations(cctx);
+          drawRegionOverlays(cctx);
+          drawBaronyBorders(cctx, s.baronies, s.atWar);
+          drawRoads(cctx, s.roads, settMapRef.current);
+          // Fog of war overlay
+          if (s.exploredHexes && Object.keys(s.exploredHexes).length > 0) {
+            drawFogOfWar(cctx, s.exploredHexes, s.camX, s.camY, s.zoom, vw, vh);
+          }
+          drawCompass(cctx);
+          drawTitleBanner(cctx);
+          cctx.restore();
+        }
+        cache.key = key;
       }
-      // Weather particles
+      if (cache.canvas) ctx.drawImage(cache.canvas, 0, 0, rect.width, rect.height);
+
+      // Animated overlay (weather + war pulses) still drawn every frame
+      ctx.save();
+      ctx.translate(-s.camX * s.zoom, -s.camY * s.zoom);
+      ctx.scale(s.zoom, s.zoom);
+      drawWarZones(ctx, s.atWar, s.baronies);
       if (s.season) drawWeatherParticles(ctx, s.season, Math.min(dt, 0.1));
-      drawCompass(ctx);
-      drawTitleBanner(ctx);
+      ctx.restore();
     }
 
     ctx.restore();
-  }, []);
+  }, [staticKey]);
 
   useEffect(() => {
-    drawFrame();
-    // Animate when wars are active OR weather is enabled (always in dynamic mode)
-    const shouldAnimate = (stateRef.current.atWar.length > 0 || !!stateRef.current.season) && !stateRef.current.staticMode;
-    if (shouldAnimate) {
-      const loop = () => { drawFrame(); rafRef.current = requestAnimationFrame(loop); };
-      rafRef.current = requestAnimationFrame(loop);
-      return () => cancelAnimationFrame(rafRef.current);
-    }
-  }, [drawFrame, atWar.length, baronies, roads, settlements, camX, camY, zoom, staticMode, season]);
+    // Props flow into the rAF draw loop via this ref. Synced in an effect (not during
+    // render) so the component can be React.memo'd without risking stale draws.
+    stateRef.current = { atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes, season };
+  }, [atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes, season]);
+
+  useEffect(() => {
+    // Continuous loop: props flow in through stateRef, the static-layer cache keeps
+    // idle frames cheap. Weather always animates in dynamic mode.
+    const loop = () => { drawFrame(); rafRef.current = requestAnimationFrame(loop); };
+    rafRef.current = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [drawFrame]);
 
   return (
     <canvas
@@ -482,4 +574,4 @@ export function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY
       style={{ imageRendering: zoom > 1.5 ? "pixelated" : "auto" }}
     />
   );
-}
+});

@@ -1,6 +1,8 @@
 "use client";
 import { useState } from "react";
 import { CREATION_PORTRAITS } from "@/components/game-svgs";
+import { GameIcon } from "@/components/game-icon";
+import { PATH_ICONS, PLAYER_SHIELDS } from "@/components/game-icons";
 
 export type RegionChoice = "Forest Valley" | "Golden Plains" | "Mountain Highlands" | "Coastal Bay" | "River Kingdom";
 export type BannerChoice = "Lion" | "Eagle" | "Oak" | "Wolf" | "Crown";
@@ -16,20 +18,20 @@ export const REGIONS: Record<RegionChoice, { color: string; difficulty: string; 
 };
 
 export const PATHS: { id: string; icon: string; label: string; desc: string }[] = [
-  { id: "Forest & Beast", icon: "🌲", label: "Forest & Beast", desc: "Master of woodcraft, hunting, and the wild." },
-  { id: "Iron",          icon: "⚒",  label: "Iron",           desc: "Forge and anvil — industry is your strength." },
-  { id: "Scholar",       icon: "📜", label: "Scholar",        desc: "Knowledge, diplomacy, and the written word." },
-  { id: "Warrior",       icon: "⚔",  label: "Warrior",        desc: "Born for battle — lead from the front." },
-  { id: "Sea",           icon: "⛵", label: "Sea",            desc: "Trade winds and tides shape your fortune." },
-  { id: "Land",          icon: "🌾", label: "Land",           desc: "Steward of field and flock — the soil provides." },
+  { id: "Forest & Beast", icon: PATH_ICONS["Forest & Beast"], label: "Forest & Beast", desc: "Master of woodcraft, hunting, and the wild." },
+  { id: "Iron",          icon: PATH_ICONS.Iron,  label: "Iron",           desc: "Forge and anvil — industry is your strength." },
+  { id: "Scholar",       icon: PATH_ICONS.Scholar, label: "Scholar",        desc: "Knowledge, diplomacy, and the written word." },
+  { id: "Warrior",       icon: PATH_ICONS.Warrior, label: "Warrior",        desc: "Born for battle — lead from the front." },
+  { id: "Sea",           icon: PATH_ICONS.Sea, label: "Sea",            desc: "Trade winds and tides shape your fortune." },
+  { id: "Land",          icon: PATH_ICONS.Land, label: "Land",           desc: "Steward of field and flock — the soil provides." },
 ];
 
 export const BANNERS: Record<BannerChoice, { icon: string; label: string }> = {
-  Lion:  { icon: "🦁", label: "The Lion — ferocity and pride" },
-  Eagle: { icon: "🦅", label: "The Eagle — vision and freedom" },
-  Oak:   { icon: "🌳", label: "The Oak — endurance and wisdom" },
-  Wolf:  { icon: "🐺", label: "The Wolf — loyalty and cunning" },
-  Crown: { icon: "♚",  label: "The Crown — ambition and rule" },
+  Lion:  { icon: PLAYER_SHIELDS.Lion,  label: "The Lion — ferocity and pride" },
+  Eagle: { icon: PLAYER_SHIELDS.Eagle, label: "The Eagle — vision and freedom" },
+  Oak:   { icon: PLAYER_SHIELDS.Oak,   label: "The Oak — endurance and wisdom" },
+  Wolf:  { icon: PLAYER_SHIELDS.Wolf,  label: "The Wolf — loyalty and cunning" },
+  Crown: { icon: PLAYER_SHIELDS.Crown, label: "The Crown — ambition and rule" },
 };
 
 export const PORTRAITS: Record<PortraitChoice, { label: string; desc: string }> = {
@@ -228,7 +230,7 @@ export function MainMenu({ onCreate, onContinue, hasSave, isAuthed }: Props) {
                     className={`rounded-2xl border p-4 text-left transition ${
                       path === p.id ? "border-[#c8a84e] bg-[#c8a84e]/10" : "border-white/8 bg-white/3 hover:bg-white/5"
                     }`}>
-                    <span className="text-3xl">{p.icon}</span>
+                    <GameIcon uri={p.icon} size={36} />
                     <p className="mt-2 text-[13px] font-bold">{p.label}</p>
                     <p className="mt-0.5 text-[11px] text-[#bbb5a0]">{p.desc}</p>
                   </button>
@@ -250,7 +252,7 @@ export function MainMenu({ onCreate, onContinue, hasSave, isAuthed }: Props) {
                       className={`rounded-2xl border p-5 text-center transition ${
                         banner === bk ? "border-[#c8a84e] bg-[#c8a84e]/10" : "border-white/8 bg-white/3 hover:bg-white/5"
                       }`}>
-                      <span className="text-5xl">{bi.icon}</span>
+                      <GameIcon uri={bi.icon} size={56} tile={false} />
                       <p className="mt-2 text-[11px] text-[#bbb5a0]">{bi.label}</p>
                     </button>
                   );
@@ -274,7 +276,7 @@ export function MainMenu({ onCreate, onContinue, hasSave, isAuthed }: Props) {
                     <p className="text-[12px] text-[#8d8674]">{PORTRAITS[portrait].label} of {region}</p>
                   </div>
                 </div>
-                <p className="text-[12px] text-[#8d8674]">Path: {path} · Banner: {BANNERS[banner].icon} {banner} · Difficulty: {REGIONS[region].difficulty}</p>
+                <p className="flex items-center justify-center gap-1.5 text-[12px] text-[#8d8674]">Path: {path} · Banner: <GameIcon uri={BANNERS[banner].icon} size={14} tile={false} /> {banner} · Difficulty: {REGIONS[region].difficulty}</p>
                 <p className="text-[11px] text-[#8d8674] italic">A small hamlet clings to the land, waiting for its first page.</p>
               </div>
               <p className="text-[11px] text-[#8d8674]">Every dynasty begins with a single name.</p>

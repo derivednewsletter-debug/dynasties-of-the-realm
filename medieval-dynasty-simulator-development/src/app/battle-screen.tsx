@@ -1,5 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { GameIcon } from "@/components/game-icon";
+import { UNIT_ICONS, BANNER_URI, BANNER_FALLBACK } from "@/components/game-icons";
 
 export type UnitType = "militia" | "archers" | "spearmen" | "knights" | "royalGuard";
 
@@ -40,11 +42,11 @@ interface BloodPuff { id: number; x: number; y: number; born: number; side: "p" 
 const FW = 1600, FH = 900;
 
 const STATS: Record<UnitType, { speed: number; range: number; dps: number; icon: string; label: string; color: string }> = {
-  militia:  { speed: 40, range: 20,  dps: 2.4, icon: "🗡", label: "Militia",  color: "#9a7440" },
-  spearmen: { speed: 34, range: 26,  dps: 3.0, icon: "🔱", label: "Spearmen", color: "#6d8450" },
-  archers:  { speed: 32, range: 230, dps: 2.1, icon: "🏹", label: "Archers",  color: "#4f7f96" },
-  knights:  { speed: 76, range: 22,  dps: 4.8, icon: "♞", label: "Knights",  color: "#a2503f" },
-  royalGuard: { speed: 56, range: 18, dps: 7.2, icon: "♚", label: "Royal Guard", color: "#c8a84e" },
+  militia:  { speed: 40, range: 20,  dps: 2.4, icon: UNIT_ICONS.militia,  label: "Militia",  color: "#9a7440" },
+  spearmen: { speed: 34, range: 26,  dps: 3.0, icon: UNIT_ICONS.spearmen, label: "Spearmen", color: "#6d8450" },
+  archers:  { speed: 32, range: 230, dps: 2.1, icon: UNIT_ICONS.archers,  label: "Archers",  color: "#4f7f96" },
+  knights:  { speed: 76, range: 22,  dps: 4.8, icon: UNIT_ICONS.knights,  label: "Knights",  color: "#a2503f" },
+  royalGuard: { speed: 56, range: 18, dps: 7.2, icon: UNIT_ICONS.royalGuard, label: "Royal Guard", color: "#c8a84e" },
 };
 
 // Battle simulation constants
@@ -452,7 +454,7 @@ export function BattleScreen({ setup, onEnd }: { setup: BattleSetup; onEnd: (o: 
                     filter: s.flash > 0 ? `brightness(${1 + s.flash * 0.9})` : undefined,
                   }}
                 >
-                  {s.side === "p" ? st.icon : setup.enemyBanner}
+                  {s.side === "p" ? <GameIcon uri={st.icon} size={26} /> : <GameIcon uri={BANNER_URI[setup.enemyBanner] ?? BANNER_FALLBACK} size={26} />}
                 </div>
                 <div className="mx-auto mt-1 h-1.5 w-12 overflow-hidden rounded-full bg-black/60">
                   <div className="h-full rounded-full" style={{ width: `${pct * 100}%`, background: s.side === "p" ? "#5ec27a" : "#d15b52" }} />
@@ -473,7 +475,7 @@ export function BattleScreen({ setup, onEnd }: { setup: BattleSetup; onEnd: (o: 
             const selected = sel.includes(s.id);
             return (
               <button key={s.id} onClick={() => setSel([s.id])} className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-left transition ${selected ? "bg-[#c8a84e] text-[#1a1611]" : "bg-white/5 text-[#eee4d0] hover:bg-white/10"}`}>
-                <span className="text-base">{st.icon}</span>
+                <GameIcon uri={st.icon} size={18} />
                 <span><span className="block text-[11px] font-semibold">{st.label}</span><span className="block text-[10px] opacity-75">{Math.round(s.men)} men</span></span>
               </button>
             );

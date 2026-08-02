@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { GameIcon } from "@/components/game-icon";
+import { UI_ICONS } from "@/components/game-icons";
 
 interface Props {
   houseName: string;
@@ -64,7 +66,7 @@ export function IntroCinematic({ houseName, firstName, banner, onDone }: Props) 
       {/* Phase 2: The Key */}
       {phase === 2 && (
         <div className="flex flex-col items-center gap-6 text-center transition-opacity duration-1000" style={{ opacity: 1 }}>
-          <span className="text-6xl text-[#c8a84e] drop-shadow-[0_0_30px_rgba(200,168,78,.5)]">🗝</span>
+          <GameIcon uri={UI_ICONS.key} size={56} tile={false} className="drop-shadow-[0_0_30px_rgba(200,168,78,.5)]" />
           <p className="text-2xl font-bold italic text-[#eee4d0]">
             &ldquo;{firstName}... they&rsquo;re waiting.&rdquo;
           </p>

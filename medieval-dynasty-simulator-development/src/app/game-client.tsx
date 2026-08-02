@@ -1,9 +1,11 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSoundDesign } from "@/lib/sound-design";
 import { BattleScreen, type BattleSetup, type BattleOutcome, type UnitType } from "./battle-screen";
 import { AuthModal, useAuth } from "@/components/auth-modal";
 import { SETTLEMENT_SVGS, PORTRAIT_SVGS, CREATION_PORTRAITS, DEITY_SVGS } from "@/components/game-svgs";
+import { GameIcon } from "@/components/game-icon";
+import { RESOURCE_ICONS, BUILDING_ICONS, OCCUPATION_ICONS, SETTLEMENT_ICONS, DEITY_GLYPHS, BANNER_URI, BANNER_FALLBACK, PLAYER_SHIELDS, BUILDING_FALLBACK, ACTION_ICONS, UI_ICONS, UNIT_ICONS, DOCK_ICONS } from "@/components/game-icons";
 import { RealmMapCanvas } from "@/components/realm-map-canvas";
 import { type RegionChoice, type BannerChoice, type GenderChoice, type PortraitChoice } from "./main-menu";
 import { type EndingData } from "./ending-screen";
@@ -92,22 +94,22 @@ const WORSHIP_FAITH = 8;        // faith gained per worship action
 const DOMINION_THRESHOLD = 28;  // faith needed to dominate a domain
 
 const DEITY_INFO: Record<DeityId, { name: string; title: string; path: Path; domain: string; color: string; icon: string; benefit: string; bonus: Partial<Res>; myth: string; culture: string }> = {
-  astra:   { name: "Astra",    title: "The Hearth-Mother",   path: "Land",            domain: "Agriculture, population & storage logistics", color: "#e8c860", icon: "🌾", benefit: "Food production and population growth.",  bonus: { food: 1.15 },
+  astra:   { name: "Astra",    title: "The Hearth-Mother",   path: "Land",            domain: "Agriculture, population & storage logistics", color: "#e8c860", icon: DEITY_GLYPHS.astra, benefit: "Food production and population growth.",  bonus: { food: 1.15 },
     myth: "When the first humans settled the central river valleys, Astra walked among them disguised as a wandering grandmother, teaching them how to turn over the heavy clay, store grain against the frost, and weave family lines into permanent villages.",
     culture: "Hearth-altars sit at the literal geographic center of every village. Land rulers who follow her path treat starvation as a personal moral failure. Her holy days mark the first spring plow and the final autumn threshing." },
-  kaelen:  { name: "Kaelen",   title: "The Iron Father",     path: "Iron",            domain: "Metallurgy, mining & heavy industry",        color: "#c8c8d0", icon: "⛏",  benefit: "Iron, tools and weapons output.",       bonus: { iron: 1.2, tools: 1.2, weapons: 1.2 },
+  kaelen:  { name: "Kaelen",   title: "The Iron Father",     path: "Iron",            domain: "Metallurgy, mining & heavy industry",        color: "#c8c8d0", icon: DEITY_GLYPHS.kaelen, benefit: "Iron, tools and weapons output.",       bonus: { iron: 1.2, tools: 1.2, weapons: 1.2 },
     myth: "Forged in the volcanic heart of Thunder-Peak, Kaelen is the unyielding resistance of stone and metal against the entropy of nature — a faceless blacksmith hammering an anvil that never cracks.",
     culture: "Worshiped intensely in the Western Highlands and Northern Marches, his temples double as guild halls where apprentices forge their first tool before taking vows. Iron rulers see civilization as a structure to be bolted together with rivets and beams." },
-  verna:   { name: "Verna",    title: "The Green Lady",      path: "Forest & Beast",  domain: "Forestry, hunt & herbal medicine",          color: "#6db866", icon: "🌿", benefit: "Wood, leather and herbs output.",        bonus: { wood: 1.2, leather: 1.2, herbs: 1.2 },
+  verna:   { name: "Verna",    title: "The Green Lady",      path: "Forest & Beast",  domain: "Forestry, hunt & herbal medicine",          color: "#6db866", icon: DEITY_GLYPHS.verna, benefit: "Wood, leather and herbs output.",        bonus: { wood: 1.2, leather: 1.2, herbs: 1.2 },
     myth: "The wild, untamed sister of Astra: where Astra is the plowed furrow, Verna is the ancient canopy that grew before the first axe was ever swung.",
     culture: "Forest folk raise no cathedrals to Verna — instead they protect Mother Groves, ancient oak and pine stands where no wood may be harvested. Her priests are hermits, rangers, and herbalists who treat sickness with willow bark and forest moss." },
-  valen:   { name: "Valen",    title: "The Golden Scales",   path: "Sea",             domain: "Maritime trade, ports & customs",            color: "#5ab8cc", icon: "🐟", benefit: "Silver income and fish yields.",        bonus: { fish: 1.25, silver: 1.15 },
+  valen:   { name: "Valen",    title: "The Golden Scales",   path: "Sea",             domain: "Maritime trade, ports & customs",            color: "#5ab8cc", icon: DEITY_GLYPHS.valen, benefit: "Silver income and fish yields.",        bonus: { fish: 1.25, silver: 1.15 },
     myth: "The legendary first navigator, who dared sail past the coastal fog banks and discovered the sea was a bridge rather than a barrier. He is credited with minting the Realm's first standardized gold currency.",
     culture: "Shrines to Valen sit inside bustling customs houses and harbors. Sea rulers treat commerce as a sacred pact — a broken contract is direct blasphemy against the Golden Scales." },
-  morvath: { name: "Morvath",  title: "The Gray Pilgrim",    path: "Scholar",         domain: "Archives, medicine & covert intelligence",   color: "#b8b8d0", icon: "📜", benefit: "Tradition and respect.",                bonus: { medicine: 1.2 },
+  morvath: { name: "Morvath",  title: "The Gray Pilgrim",    path: "Scholar",         domain: "Archives, medicine & covert intelligence",   color: "#b8b8d0", icon: DEITY_GLYPHS.morvath, benefit: "Tradition and respect.",                bonus: { medicine: 1.2 },
     myth: "The silent, hooded archivist of the universe. Legend says he records every human birth, political betrayal, and triumph in a celestial library spanning eternity — inspiring the earthly tradition of the dynastic Chronicle.",
     culture: "Scholars, monks, and administrators pray to Morvath before opening a ledger or diagnosing a plague. His shrines are quiet, candlelit alcoves tucked inside university archives and monastery scriptoriums." },
-  sol:     { name: "Sol Invictus", title: "The High Arbiter", path: "Warrior",        domain: "War, knightly code & royal law",             color: "#e0a040", icon: "⚔",  benefit: "Military strength and morale.",        bonus: {},
+  sol:     { name: "Sol Invictus", title: "The High Arbiter", path: "Warrior",        domain: "War, knightly code & royal law",             color: "#e0a040", icon: DEITY_GLYPHS.sol, benefit: "Military strength and morale.",        bonus: {},
     myth: "The institutional champion of the Cathedral Faith and the Crown — the blinding light of truth, the rigidity of feudal law, and the divine mandate binding the fifty baronies to the central throne.",
     culture: "His towering cathedrals dominate the skylines of major cities. Warrior rulers and garrison commanders swear martial oaths upon his altars, vowing to hold the line against invaders and rebels alike." },
 };
@@ -130,19 +132,19 @@ const RCOL: Record<Region, string> = {
   "Southern Wilds": "#5a9a52",
 };
 const PORTRAITS = { ruler: PORTRAIT_SVGS.ruler, spouse: PORTRAIT_SVGS.spouse, heir: PORTRAIT_SVGS.heir, mentor: PORTRAIT_SVGS.mentor };
-const RICONS: Record<RN, string> = { food: "🌾", wood: "🪵", stone: "🪨", iron: "⛏", coal: "◼", fish: "🐟", wool: "🐑", leather: "🧶", herbs: "🌿", tools: "🔧", weapons: "⚔️", medicine: "💊", silver: "🪙" };
+const RICONS: Record<RN, string> = RESOURCE_ICONS;
 const TICKER: RN[] = ["food", "wood", "stone", "iron", "tools", "weapons", "silver"];
 const NAMES = ["Alden","Mira","Rowan","Elowen","Cedric","Brina","Osric","Tamsin","Gareth","Isolde","Perrin","Anwen","Edric","Liora","Maera","Alaric","Duncan","Maelys"];
 const SURNAMES = ["Moss","Vale","Brook","Fenn","Ash","Reed","Thorne","Hart","Wold","Grey","Miller","Carver"];
 const OCCS = ["farmer","woodcutter","herbalist","smith","fletcher","trapper","scribe","potter","goatherd","miller","guard","merchant"];
 
 const OCC_STYLE: Record<string, { tunic: string; tool: string }> = {
-  farmer: { tunic: "#5a7a3a", tool: "🌾" }, woodcutter: { tunic: "#6b4423", tool: "🪓" },
-  herbalist: { tunic: "#3a7a5a", tool: "🌿" }, smith: { tunic: "#4a4a4a", tool: "🔨" },
-  fletcher: { tunic: "#7a6a3a", tool: "🏹" }, trapper: { tunic: "#5a4a3a", tool: "🪤" },
-  scribe: { tunic: "#3a4a6a", tool: "📜" }, potter: { tunic: "#8a5a3a", tool: "🏺" },
-  goatherd: { tunic: "#6a6a5a", tool: "🐐" }, miller: { tunic: "#8a7a5a", tool: "⚙" },
-  guard: { tunic: "#4a3a3a", tool: "🗡" }, merchant: { tunic: "#6a3a5a", tool: "💰" },
+  farmer: { tunic: "#5a7a3a", tool: OCCUPATION_ICONS.farmer }, woodcutter: { tunic: "#6b4423", tool: OCCUPATION_ICONS.woodcutter },
+  herbalist: { tunic: "#3a7a5a", tool: OCCUPATION_ICONS.herbalist }, smith: { tunic: "#4a4a4a", tool: OCCUPATION_ICONS.smith },
+  fletcher: { tunic: "#7a6a3a", tool: OCCUPATION_ICONS.fletcher }, trapper: { tunic: "#5a4a3a", tool: OCCUPATION_ICONS.trapper },
+  scribe: { tunic: "#3a4a6a", tool: OCCUPATION_ICONS.scribe }, potter: { tunic: "#8a5a3a", tool: OCCUPATION_ICONS.potter },
+  goatherd: { tunic: "#6a6a5a", tool: OCCUPATION_ICONS.goatherd }, miller: { tunic: "#8a7a5a", tool: OCCUPATION_ICONS.miller },
+  guard: { tunic: "#4a3a3a", tool: OCCUPATION_ICONS.guard }, merchant: { tunic: "#6a3a5a", tool: OCCUPATION_ICONS.merchant },
 };
 
 const BUILDS: Building[] = [
@@ -314,7 +316,7 @@ const portrait = (m: Family, i: number, rulerPortrait?: PortraitChoice) => {
   return i % 2 === 0 ? PORTRAITS.heir : PORTRAITS.spouse;
 };
 const renown = (r: number) => r > 80 ? "Renowned" : r > 60 ? "Respected" : r > 40 ? "Known" : "Obscure";
-const sIcon = (t: SType, h: boolean) => h ? "♜" : t === "city" ? "🏛" : t === "town" ? "🏰" : t === "village" ? "🏠" : "🛖";
+const sIcon = (t: SType, h: boolean) => h ? SETTLEMENT_ICONS.home : t === "city" ? SETTLEMENT_ICONS.city : t === "town" ? SETTLEMENT_ICONS.town : t === "village" ? SETTLEMENT_ICONS.village : SETTLEMENT_ICONS.hamlet;
 const sImg = (t: SType, h: boolean) => h ? SETTLEMENT_SVGS.hamlet : t === "city" ? SETTLEMENT_SVGS.city : t === "town" ? SETTLEMENT_SVGS.town : SETTLEMENT_SVGS.village;
 const sArt = (t: SType, h: boolean) => h ? 760 : t === "city" ? 1150 : t === "town" ? 900 : t === "village" ? 660 : 520;
 const chron = (y: number, s: Season, t: string, tx: string, tone: string): ChronEntry => ({ id: uid("c"), year: y, season: s, title: t, text: tx, tone });
@@ -559,7 +561,7 @@ function initGame(cd?: CharData): GS {
   const firstName = cd?.firstName ?? "Landon";
   const gender = cd?.gender ?? "male";
   const title = gender === "female" ? "Chieftess" : "Chief";
-  const bannerIcon = cd?.banner ? { Lion: "🦁", Eagle: "🦅", Oak: "🌳", Wolf: "🐺", Crown: "♚" }[cd.banner] : "♜";
+  const bannerIcon = cd?.banner ? (PLAYER_SHIELDS[cd.banner] ?? BANNER_FALLBACK) : BANNER_FALLBACK;
   const rulerPath = cd?.path ?? "Forest & Beast";
 
   // Home position is determined by the chosen region
@@ -998,30 +1000,52 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           extra.push(chron(year, season, `${season} Arrives`, season === "Winter" ? "Snow settles over the valley; stores begin to thin." : season === "Spring" ? "Thaw comes and the fields are turned." : season === "Summer" ? "Long days bring building and trade." : "Harvest and taxes fill the barns.", "hope"));
 
           // ──── ROAD EVOLUTION (season boundary) ────
+          // Optimized: group settlements by barony and only examine intra-barony
+          // spokes plus inter-barony anchors — far cheaper than all-pairs O(n²).
           let roads = [...(prev.roads ?? [])];
+          const roadsByKey = new Map<string, (typeof roads)[number]>();
+          for (const r of roads) roadsByKey.set(r.fromSid < r.toSid ? `${r.fromSid}|${r.toSid}` : `${r.toSid}|${r.fromSid}`, r);
           if (prev.settlements.length > 1) {
-            for (const a of prev.settlements) for (const b of prev.settlements) {
-              if (a.id >= b.id) continue;
+            const settleById = new Map(prev.settlements.map(s => [s.id, s] as const));
+            const byBid = new Map<string, typeof prev.settlements>();
+            for (const s of prev.settlements) {
+              const arr = byBid.get(s.bid);
+              if (arr) arr.push(s); else byBid.set(s.bid, [s]);
+            }
+            const consider = (a: typeof prev.settlements[number], b: typeof prev.settlements[number]) => {
+              if (a.id === b.id) return;
               const dist = Math.hypot(a.x - b.x, b.y - a.y);
-              if (dist > 2500) continue;
-              const existing = roads.find(r => (r.fromSid === a.id && r.toSid === b.id) || (r.fromSid === b.id && r.toSid === a.id));
+              if (dist > 2500) return;
+              const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
+              const existing = roadsByKey.get(key);
               const traffic = Math.min(200, (a.pop + b.pop) / 20 + (existing?.traffic ?? 0) * (existing?.decayed ? 0.7 : 0.95));
               const level = traffic > 140 ? 3 : traffic > 75 ? 2 : traffic > 3 ? 1 : 0;
-              if (level === 0) continue;
+              if (level === 0) return;
               if (existing) {
                 existing.traffic = traffic;
                 existing.level = level;
                 existing.decayed = false;
               } else {
-                roads.push({ id: uid("rd"), fromSid: a.id, toSid: b.id, level, traffic, decayed: false });
+                const nr = { id: uid("rd"), fromSid: a.id, toSid: b.id, level, traffic, decayed: false };
+                roads.push(nr);
+                roadsByKey.set(key, nr);
               }
+            };
+            // intra-barony web (anchor ↔ satellites, satellite ↔ satellite)
+            for (const list of byBid.values()) {
+              for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) consider(list[i], list[j]);
             }
+            // inter-barony highways: only anchor settlements connect to neighbors
+            const anchors: typeof prev.settlements = [];
+            for (const list of byBid.values()) if (list[0]) anchors.push(list[0]);
+            for (let i = 0; i < anchors.length; i++) for (let j = i + 1; j < anchors.length; j++) consider(anchors[i], anchors[j]);
           }
           // Ghost roads: if a settlement's pop dropped hard, decay its roads
+          const settleByIdRoads = new Map(prev.settlements.map(s => [s.id, s] as const));
           for (const r of roads) {
             if (r.decayed) continue;
-            const a = prev.settlements.find(s => s.id === r.fromSid);
-            const settTo = prev.settlements.find(s => s.id === r.toSid);
+            const a = settleByIdRoads.get(r.fromSid);
+            const settTo = settleByIdRoads.get(r.toSid);
             if (a && settTo && (a.pop < 30 || settTo.pop < 30)) {
               r.decayed = true;
               r.level = Math.max(2, r.level - 1);
@@ -1043,13 +1067,15 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           baronies = prev.baronies.map((b, i) => { const p = ((i * 5 + b.eco + b.mil) % 9) - 4; return { ...b, eco: clamp01(b.eco + p * 0.4), mil: clamp01(b.mil + (p > 0 ? 1 : -0.5)), rel: cl(b.rel + (p > 2 ? -1 : 0.4), -100, 100) }; });
         }
         // ──── AI COUNTER-ATTACKS ────
+        const repMap = new Map((prev.factionRep ?? []).map(fr => [fr.bid, fr] as const));
+        const alliedBids = new Set(prev.alliances.map(a => a.bid));
         for (let bi = 0; bi < baronies.length; bi++) {
           const b = baronies[bi];
           if (b.id === prev.baronies[0]?.id) continue;
-          const fr = getBaronyRep(prev.factionRep ?? [], b.id);
+          const fr = repMap.get(b.id);
           if (!fr) continue;
           const trustScore = fr.trust - fr.grudge * 0.5 - fr.fear * 0.2;
-          const isAllied = prev.alliances.some(a => a.bid === b.id);
+          const isAllied = alliedBids.has(b.id);
           // AI raids if trust is extremely low
           if (trustScore < -45 && Math.random() < 0.18 && !isAllied) {
             const looted = Math.min(res.silver, 12 + Math.floor(Math.random() * 18));
@@ -1059,7 +1085,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           }
           // AI forms coalitions against the player
           else if (trustScore < -30 && Math.random() < 0.06 && prev.rank !== "Hamlet") {
-            const allyBid = prev.baronies.find(b2 => b2.id !== b.id && b2.id !== prev.baronies[0]?.id && (getBaronyRep(prev.factionRep ?? [], b2.id)?.trust ?? 0) < -15)?.id;
+            const allyBid = prev.baronies.find(b2 => b2.id !== b.id && b2.id !== prev.baronies[0]?.id && (repMap.get(b2.id)?.trust ?? 0) < -15)?.id;
             if (allyBid) {
               baronies[bi] = { ...b, mil: clamp01(b.mil + 8), rel: cl(b.rel - 15, -100, 100) };
               const allyIdx = baronies.findIndex(b2 => b2.id === allyBid);
@@ -1372,7 +1398,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   const resolveEvt = (o: EvtOpt) => { setConfirmReset(false); setG(p => { if (!p.evt) return p; const rep = { ...p.rep }; for (const [k, v] of Object.entries(o.rep ?? {}) as [keyof Rep, number][]) rep[k] = clamp01(rep[k] + v); sound.play(p.evt.crisis ? "crisis" : "event"); return { ...p, res: chRes(p.res, o.res ?? {}), rep, prestige: p.prestige + (o.pres ?? 0), evt: null, chronicle: [chron(p.year, p.season, p.evt.title, o.result, "warning"), ...p.chronicle] }; }); };
 
 /* module-level build constants */
-const BUILD_ICONS: Record<string, string> = { homes: "🏠", lumber: "🪓", farm: "🌾", mill: "⚙", mine: "⛏", smith: "🔨", market: "🏪", shrine: "🪦", watch: "🗼", temple_astra: "🌾", temple_kaelen: "⛏", temple_verna: "🌿", temple_valen: "🐟", temple_morvath: "📜", temple_sol: "⚔" };
+const BUILD_ICONS: Record<string, string> = BUILDING_ICONS;
 const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm: 90, mill: 75, mine: 85, smith: 65, market: 80, shrine: 60, watch: 70, temple_astra: 90, temple_kaelen: 90, temple_verna: 90, temple_valen: 90, temple_morvath: 90, temple_sol: 90 };
 
   const build = (t: Building) => { setConfirmReset(false); setG(p => {
@@ -1411,10 +1437,10 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     });
   };
 
-  const removeBuilding = (pbId: string) => {
+  const removeBuilding = useCallback((pbId: string) => {
     setG(p => { const removed = p.placedBuildings.find(pb => pb.id === pbId); if (!removed) return p; const bExists = p.placedBuildings.filter(pb => pb.buildId === removed.buildId && pb.id !== pbId).length > 0; return { ...p, placedBuildings: p.placedBuildings.filter(pb => pb.id !== pbId), buildings: bExists ? p.buildings : p.buildings.filter(b => b.id !== removed.buildId) }; });
     setNotice("Building removed.");
-  };
+  }, []);
 
   const trainAct = () => { setConfirmReset(false); setG(p => { if (p.army.training >= 100) { setNotice("Training already at maximum."); return p; } if (!afford(p.res, { food: 10, weapons: 2, silver: 12 })) { setNotice("Need food, weapons and silver."); return p; } setNotice("The militia drilled in the yard."); return { ...p, res: chRes(p.res, { food: -10, weapons: -2, silver: -12 }), prestige: p.prestige + 2, army: { ...p.army, training: clamp01(p.army.training + 4) }, rep: { ...p.rep, respect: clamp01(p.rep.respect + 4), fear: clamp01(p.rep.fear + 3) }, chronicle: [chron(p.year, p.season, "Militia Muster", "Hearthmere drilled under ash poles.", "glory"), ...p.chronicle] }; }); };
 
@@ -1641,11 +1667,18 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
   const onUp = (e: React.PointerEvent) => { const wasMoved = drag.current.moved; drag.current.on = false; if (buildMode && placeBuildId && !wasMoved && !(e.target as HTMLElement).closest("[data-ui]")) { const r = mapRef.current?.getBoundingClientRect(); if (r) { const wx = cam.x + (e.clientX - r.left) / cam.z; const wy = cam.y + (e.clientY - r.top) / cam.z; placeBuilding(wx, wy); } } };
   const onWheel = (e: React.WheelEvent) => { e.preventDefault(); e.stopPropagation(); const r = mapRef.current?.getBoundingClientRect(); if (!r) return; const mx = e.clientX - r.left, my = e.clientY - r.top; setCam(c => { const wx = c.x + mx / c.z, wy = c.y + my / c.z; const nz = cl(c.z * (e.deltaY > 0 ? 0.96 : 1.04), 0.08, 3.2); return { z: nz, x: cl(wx - mx / nz, 0, Math.max(0, W - vp.w / nz)), y: cl(wy - my / nz, 0, Math.max(0, H - vp.h / nz)) }; }); };
 
-  const toggle = (p: Panel) => { setConfirmReset(false); setPanel(cur => cur === p ? null : p); };
-  const pickS = (s: Settlement, focus = false) => { setG(p => ({ ...p, selSid: s.id, selBid: s.bid, selCid: null })); setPanel("Settlement"); if (focus) center(s.x, s.y, Math.max(cam.z, 1.1)); };
-  const pickB = (b: Barony, focus = false) => { setG(p => ({ ...p, selBid: b.id })); setPanel("Barony"); if (focus) center(b.x, b.y, Math.max(cam.z, 0.7)); };
-  const pickC = (c: Citizen) => { setG(p => ({ ...p, selCid: c.id, selSid: c.sid })); setPanel("Villager"); };
-  const onMini = (e: React.MouseEvent<HTMLDivElement>) => { const r = e.currentTarget.getBoundingClientRect(); center((e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H); };
+  const toggle = useCallback((p: Panel) => { setConfirmReset(false); setPanel(cur => cur === p ? null : p); }, []);
+  const pickS = useCallback((s: Settlement, focus = false) => { setG(p => ({ ...p, selSid: s.id, selBid: s.bid, selCid: null })); setPanel("Settlement"); if (focus) center(s.x, s.y, 1.1); }, [center]);
+  const pickB = useCallback((b: Barony, focus = false) => { setG(p => ({ ...p, selBid: b.id })); setPanel("Barony"); if (focus) center(b.x, b.y, 0.7); }, [center]);
+  const pickC = useCallback((c: Citizen) => { setG(p => ({ ...p, selCid: c.id, selSid: c.sid })); setPanel("Villager"); }, []);
+  const onMini = useCallback((e: React.MouseEvent<HTMLDivElement>) => { const r = e.currentTarget.getBoundingClientRect(); center((e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H); }, [center]);
+
+  /* ── stable map-marker handlers (kept referentially stable so memoized markers skip re-renders) ── */
+  const onHover = useCallback((h: { x: number; y: number; label: string; sub: string } | null) => setHover(h), []);
+  const onLeave = useCallback(() => setHover(null), []);
+  const onDblCenterS = useCallback((s: Settlement) => center(s.x, s.y, 1.4), [center]);
+  const onDblCenterB = useCallback((b: Barony) => center(b.x, b.y, 0.9), [center]);
+  const onHomeDock = useCallback(() => center(home.x, home.y, 1.2), [center, home]);
 
   const filtChron = useMemo(() => {
     let list = g.chronicle;
@@ -1695,6 +1728,9 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
   const visBaronies = useMemo(() => g.baronies.filter(b => visible(b.x, b.y, 700)), [g.baronies, cam, vp]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* thin border lines between neighbouring baronies */
+  // Positions are immutable for a save — key the memo on a position signature so
+  // the reference-churn of the baronies array (drift/relations) never re-computes it.
+  const baronyPosKey = g.baronies.map(b => `${b.x},${b.y},${b.region}`).join("|");
   const borders = useMemo(() => {
     const out: { d: string; col: string; w: number }[] = [];
     for (let i = 0; i < g.baronies.length; i++) for (let j = i + 1; j < g.baronies.length; j++) {
@@ -1709,10 +1745,36 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       out.push({ d, col: a.region !== b.region ? "rgba(200,168,78,0.30)" : "rgba(232,220,196,0.13)", w: a.region !== b.region ? 3 : 1.6 });
     }
     return out;
-  }, [g.baronies]);
+  }, [baronyPosKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const seasonRateMemo = useMemo(() => seasonRate(g), [g.season, g.pop, g.buildings]);
   const seasonPct = (g.day / DAYS_PER_SEASON) * 100;
+
+  /* ── cheap lookup maps: replace O(n) .find()/.filter() in render ── */
+  const baronyById = useMemo(() => new Map(g.baronies.map(b => [b.id, b])), [g.baronies]);
+  const settlementById = useMemo(() => new Map(g.settlements.map(s => [s.id, s])), [g.settlements]);
+  const citizensBySid = useMemo(() => {
+    const m = new Map<string, Citizen[]>();
+    for (const c of g.citizens) {
+      const arr = m.get(c.sid);
+      if (arr) arr.push(c); else m.set(c.sid, [c]);
+    }
+    return m;
+  }, [g.citizens]);
+  const roadSegments = useMemo(() => {
+    const out: { key: string; x1: number; y1: number; x2: number; y2: number; stroke: string; width: number; dash: string }[] = [];
+    for (const r of g.roads ?? []) {
+      if (r.level < 2) continue;
+      const a = settlementById.get(r.fromSid);
+      const b2 = settlementById.get(r.toSid);
+      if (!a || !b2) continue;
+      const isGhost = r.decayed;
+      const colors = ["", "", isGhost ? "rgba(140,120,100,0.15)" : "rgba(180,160,120,0.25)", isGhost ? "rgba(140,120,100,0.25)" : "rgba(180,160,120,0.45)"];
+      const widths = [0, 0, isGhost ? 1.5 : 2.5, isGhost ? 2.5 : 4.5];
+      out.push({ key: r.id, x1: a.x, y1: a.y, x2: b2.x, y2: b2.y, stroke: colors[r.level], width: widths[r.level], dash: isGhost ? "6 14" : r.level === 3 ? "none" : "10 8" });
+    }
+    return out;
+  }, [g.roads, settlementById]);
 
   return (
     <main className="relative h-screen w-screen overflow-hidden bg-[#0a0908] text-[#eee4d0]">
@@ -1722,29 +1784,17 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
           <RealmMapCanvas atWar={g.atWar} baronies={g.baronies} roads={g.roads ?? []} settlements={g.settlements} camX={cam.x} camY={cam.y} zoom={cam.z} exploredHexes={g.exploredHexes} season={g.season} />
 
           {/* thin barony borders */}
-          <svg className="pointer-events-none absolute inset-0" width={W} height={H}>
-            {borders.map((b, i) => <path key={i} d={b.d} stroke={b.col} strokeWidth={b.w} fill="none" strokeDasharray="14 10" />)}
-            {/* roads */}
-            {(g.roads ?? []).filter(r => r.level >= 2).map(r => {
-              const a = g.settlements.find(s => s.id === r.fromSid);
-              const b2 = g.settlements.find(s => s.id === r.toSid);
-              if (!a || !b2) return null;
-              const isGhost = r.decayed;
-              const colors = ["", "", isGhost ? "rgba(140,120,100,0.15)" : "rgba(180,160,120,0.25)", isGhost ? "rgba(140,120,100,0.25)" : "rgba(180,160,120,0.45)"];
-              const widths = [0, 0, isGhost ? 1.5 : 2.5, isGhost ? 2.5 : 4.5];
-              return <line key={`rd-${r.id}`} x1={a.x} y1={a.y} x2={b2.x} y2={b2.y} stroke={colors[r.level]} strokeWidth={widths[r.level]} strokeDasharray={isGhost ? "6 14" : r.level === 3 ? "none" : "10 8"} />;
-            })}
-          </svg>
+          <MapOverlaySvg borders={borders} roads={roadSegments} />
 
           {g.caravans.map(caravan => {
-            const target = g.baronies.find(b => b.id === caravan.tid);
+            const target = baronyById.get(caravan.tid);
             if (!target) return null;
             const progress = 1 - cl(caravan.days / Math.max(1, caravan.total || 160), 0, 1);
             const x = home.x + (target.x - home.x) * progress;
             const y = home.y + (target.y - home.y) * progress;
             return (
               <div key={caravan.id} className="pointer-events-none absolute" style={{ left: x, top: y, zIndex: 22 }}>
-                <div className="-translate-x-1/2 -translate-y-1/2 rounded-full bg-[#c8a84e] px-1.5 py-0.5 text-[10px] shadow-lg ring-2 ring-black/50">🐎</div>
+                <div className="-translate-x-1/2 -translate-y-1/2 rounded-full bg-[#c8a84e] px-1.5 py-0.5 shadow-lg ring-2 ring-black/50"><GameIcon uri={UI_ICONS.caravan} size={12} tile={false} /></div>
                 <div className="mt-1 -translate-x-1/2 whitespace-nowrap rounded bg-black/75 px-1.5 py-0.5 text-[9px] text-[#eee4d0]">{Math.ceil(caravan.days)}d</div>
               </div>
             );
@@ -1756,94 +1806,44 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
           ))}
 
           {/* settlement artwork */}
-          {visSettles.filter(s => LOD.art || s.id === g.selSid).map(s => {
-            const size = sArt(s.type, s.home);
-            return (
-              <button key={`art-${s.id}`} data-ui="1" onClick={() => pickS(s)} onPointerEnter={() => setHover({ x: s.x, y: s.y, label: s.name, sub: `${s.type} · ${g.baronies.find(b => b.id === s.bid)?.house ?? ""}` })} onPointerLeave={() => setHover(null)}
-                className="absolute -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[46%] transition hover:brightness-110"
-                style={{ left: s.x, top: s.y, width: size, height: size * 0.68, zIndex: 5, boxShadow: g.selSid === s.id ? "0 0 0 4px rgba(200,168,78,.7), 0 30px 70px rgba(0,0,0,.55)" : "0 24px 60px rgba(0,0,0,.5)" }}>
-                <img src={sImg(s.type, s.home)} alt={s.name} loading="lazy" decoding="async" className="h-full w-full object-cover" draggable={false} />
-                <span className="absolute inset-0" style={{ background: "radial-gradient(ellipse at center, transparent 52%, rgba(10,9,8,.85) 88%)" }} />
-              </button>
-            );
-          })}
+          {visSettles.filter(s => LOD.art || s.id === g.selSid).map(s => (
+            <SettlementArt key={`art-${s.id}`} s={s} house={baronyById.get(s.bid)?.house ?? ""} selected={g.selSid === s.id} onPick={pickS} onHover={onHover} onLeave={onLeave} />
+          ))}
 
           {/* villagers – CSS orbit on the outer streets, never over the building core */}
           {LOD.people && visSettles.map(s => {
-            const cits = g.citizens.filter(c => c.sid === s.id);
-            return cits.map(c => {
-              const st = OCC_STYLE[c.occ] ?? { tunic: "#666", tool: "•" };
-              const sel = g.selCid === c.id;
-              return (
-                <div key={c.id} className="orbit" style={{ left: s.x, top: s.y, zIndex: 14 }}>
-                  <div className="orbit-arm" style={{ animationDuration: `${c.dur}s`, animationDelay: `-${c.phase}s`, animationDirection: c.rev ? "reverse" : "normal" }}>
-                    <div className="orbit-pos" style={{ transform: `translateX(${c.orbit}px)` }}>
-                      <div className="orbit-up" style={{ animationDuration: `${c.dur}s`, animationDelay: `-${c.phase}s`, animationDirection: c.rev ? "normal" : "reverse" }}>
-                        <button data-ui="1" onClick={() => pickC(c)} onPointerEnter={() => setHover({ x: s.x, y: s.y - 40, label: c.name, sub: c.occ })} onPointerLeave={() => setHover(null)} className={`villager ${sel ? "v-sel" : ""}`} title={`${c.name} · ${c.occ}`}>
-                          <span className="v-bob" style={{ animationDelay: `-${(c.phase % 1).toFixed(2)}s` }}>
-                            <span className="v-head" />
-                            <span className="v-torso" style={{ background: st.tunic }} />
-                            <span className="v-legL" /><span className="v-legR" />
-                          </span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            });
+            const cits = citizensBySid.get(s.id) ?? [];
+            return cits.map(c => (
+              <CitizenOrbit key={c.id} c={c} sx={s.x} sy={s.y} selected={g.selCid === c.id} tunic={OCC_STYLE[c.occ]?.tunic ?? "#666"} onPick={pickC} onHover={onHover} onLeave={onLeave} />
+            ));
           })}
 
           {/* settlement markers */}
-          {LOD.settles && visSettles.map(s => {
-            const size = s.home ? 34 : s.type === "city" ? 32 : s.type === "town" ? 28 : s.type === "village" ? 24 : 20;
-            const sel = g.selSid === s.id;
-            return (
-              <button key={s.id} data-ui="1" onClick={() => pickS(s)} onDoubleClick={() => center(s.x, s.y, 1.4)}
-                onPointerEnter={() => setHover({ x: s.x, y: s.y, label: s.name, sub: `${s.type} · ${g.baronies.find(b => b.id === s.bid)?.house ?? ""}` })} onPointerLeave={() => setHover(null)}
-                className="absolute flex -translate-x-1/2 flex-col items-center" style={{ left: s.x, top: s.y - ((LOD.art || s.id === g.selSid) ? sArt(s.type, s.home) * 0.30 : 0), zIndex: 16 }}>
-                <span className="grid place-items-center rounded-full shadow-xl transition hover:scale-110" style={{ width: size, height: size, fontSize: size * 0.5, background: s.home ? "#6b1f1f" : "rgba(20,18,15,.9)", border: sel ? "2.5px solid #c8a84e" : s.home ? "2.5px solid #c8a84e" : "2px solid rgba(200,168,78,.4)" }}>{sIcon(s.type, s.home)}</span>
-                {LOD.names && <span className="mt-1 whitespace-nowrap rounded-full bg-black/75 px-2.5 py-0.5 font-semibold text-[#eee4d0]" style={{ fontSize: Math.max(11, 13 / Math.max(cam.z, .35)) }}>{s.name}</span>}
-              </button>
-            );
-          })}
+          {LOD.settles && visSettles.map(s => (
+            <SettlementMarker key={s.id} s={s} house={baronyById.get(s.bid)?.house ?? ""} selected={g.selSid === s.id}
+              showName={LOD.names} yOffset={(LOD.art || g.selSid === s.id) ? sArt(s.type, s.home) * 0.30 : 0}
+              nameFont={Math.max(11, 13 / Math.max(cam.z, .35))} onPick={pickS} onDbl={onDblCenterS} onHover={onHover} onLeave={onLeave} />
+          ))}
 
           {/* barony crests */}
-          {LOD.crests && visBaronies.map(b => {
-            const sel = g.selBid === b.id;
-            const size = cam.z < 0.2 ? 120 : cam.z < 0.5 ? 70 : 46;
-            return (
-              <button key={b.id} data-ui="1" onClick={() => pickB(b)} onDoubleClick={() => center(b.x, b.y, 0.9)}
-                onPointerEnter={() => setHover({ x: b.x, y: b.y - size, label: b.house, sub: `${b.name} · ${b.region}` })} onPointerLeave={() => setHover(null)}
-                className="absolute grid -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full shadow-2xl transition hover:scale-110"
-                style={{ left: b.x, top: b.y - (cam.z < 0.5 ? 0 : 420), width: size, height: size, fontSize: size * 0.46, background: b.color, border: sel ? `${size * 0.07}px solid #c8a84e` : `${size * 0.05}px solid rgba(0,0,0,.55)`, zIndex: 18 }}>
-                {b.banner}
-                {g.alliances.some(a => a.bid === b.id) && <span className="absolute -bottom-1 -right-1 grid h-1/3 w-1/3 place-items-center rounded-full bg-emerald-500 text-[50%] text-black">✓</span>}
-                {g.atWar.includes(b.id) && <span className="absolute -bottom-1 -right-1 grid h-1/3 w-1/3 place-items-center rounded-full bg-red-600 text-[50%]">⚔</span>}
-              </button>
-            );
-          })}
+          {LOD.crests && visBaronies.map(b => (
+            <BaronyCrest key={b.id} b={b} selected={g.selBid === b.id} size={cam.z < 0.2 ? 120 : cam.z < 0.5 ? 70 : 46}
+              topOffset={cam.z < 0.5 ? 0 : 420} allied={g.alliances.some(a => a.bid === b.id)} atWar={g.atWar.includes(b.id)}
+              crestUri={BANNER_URI[b.banner] ?? (b.banner.startsWith("data:") ? b.banner : BANNER_FALLBACK)}
+              onPick={pickB} onDbl={onDblCenterB} onHover={onHover} onLeave={onLeave} />
+          ))}
 
           {/* placed buildings */}
-          {g.placedBuildings.filter(pb => visible(pb.x, pb.y, 200)).map(pb => {
-            const icon = BUILD_ICONS[pb.buildId] ?? "🏗";
-            const radius = BUILD_PLACE_RADIUS[pb.buildId] ?? 70;
-            return (
-              <div key={pb.id} data-ui="1" className="pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2" style={{ left: pb.x, top: pb.y, zIndex: 12 }}>
-                <div className="grid place-items-center rounded-xl border border-[#c8a84e]/30 bg-[#1a1611]/80 shadow-lg transition hover:scale-110 hover:border-[#c8a84e]/70" style={{ width: radius * 0.7, height: radius * 0.7, fontSize: radius * 0.32 }} title={`${pb.name} (Lv ${pb.level}) — Click to remove`} onClick={(e) => { e.stopPropagation(); removeBuilding(pb.id); }}>
-                  {icon}
-                </div>
-                <span className="pointer-events-none block -translate-x-1/2 whitespace-nowrap text-center text-[9px] font-semibold text-[#c8a84e]" style={{ left: "50%", position: "relative" }}>{pb.name}</span>
-              </div>
-            );
-          })}
+          {g.placedBuildings.filter(pb => visible(pb.x, pb.y, 200)).map(pb => (
+            <BuildingMarker key={pb.id} pb={pb} icon={BUILD_ICONS[pb.buildId] ?? BUILDING_FALLBACK} radius={BUILD_PLACE_RADIUS[pb.buildId] ?? 70} onRemove={removeBuilding} />
+          ))}
 
           {/* ghost placement preview */}
           {buildMode && placeBuildId && ghostRef.current && (() => {
             const gp = ghostRef.current!;
             const bt = BUILDS.find(b => b.id === placeBuildId);
             if (!bt) return null;
-            const icon = BUILD_ICONS[bt.id] ?? "🏗";
+            const icon = BUILD_ICONS[bt.id] ?? BUILDING_FALLBACK;
             const radius = BUILD_PLACE_RADIUS[bt.id] ?? 70;
             const sett = g.settlements.find(s => s.id === g.selSid);
             const dist = sett ? Math.hypot(gp.x - sett.x, gp.y - sett.y) : 9999;
@@ -1857,8 +1857,8 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
             const valid = inRange && !overlap;
             return (
               <div className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2" style={{ left: gp.x, top: gp.y, zIndex: 25 }}>
-                <div className="grid place-items-center rounded-xl border-2 border-dashed transition-all duration-75" style={{ width: radius * 0.7, height: radius * 0.7, fontSize: radius * 0.32, borderColor: valid ? "rgba(74,222,128,0.7)" : "rgba(239,68,68,0.7)", background: valid ? "rgba(74,222,128,0.1)" : "rgba(239,68,68,0.1)" }}>
-                  {icon}
+                <div className="grid place-items-center rounded-xl border-2 border-dashed transition-all duration-75" style={{ width: radius * 0.7, height: radius * 0.7, borderColor: valid ? "rgba(74,222,128,0.7)" : "rgba(239,68,68,0.7)", background: valid ? "rgba(74,222,128,0.1)" : "rgba(239,68,68,0.1)" }}>
+                  <GameIcon uri={icon} size={radius * 0.42} />
                 </div>
                 <span className="block -translate-x-1/2 whitespace-nowrap text-center text-[9px] font-semibold" style={{ left: "50%", position: "relative", color: valid ? "#4ade80" : "#ef4444" }}>{valid ? bt.name : overlap ? "Blocked" : "Out of range"}</span>
               </div>
@@ -1881,7 +1881,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
             {/* Shimmer loading skeleton */}
             <div className="relative mx-auto mb-5 h-48 w-64 overflow-hidden rounded-xl bg-white/5">
               <div className="absolute inset-0 -translate-x-full animate-[shimmer_2s_infinite] bg-gradient-to-r from-transparent via-white/8 to-transparent" />
-              <div className="absolute inset-0 flex items-center justify-center"><span className="text-5xl">🏰</span></div>
+              <div className="absolute inset-0 flex items-center justify-center"><GameIcon uri={SETTLEMENT_ICONS.city} size={64} tile={false} /></div>
             </div>
             <div className="space-y-2">
               <div className="mx-auto h-3 w-40 overflow-hidden rounded-full bg-white/8"><div className="h-full animate-pulse rounded-full bg-[#c8a84e]/40" style={{ width: '65%' }} /></div>
@@ -1900,7 +1900,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       {/* ════ TOP BAR ════ */}
       <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 p-3">
         <button data-ui="1" onClick={() => toggle("House")} className="ck-panel pointer-events-auto flex items-center gap-3 rounded-2xl py-2 pl-2 pr-5 transition hover:brightness-110">
-          <span className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-[#a43a39] to-[#4b1219] text-lg ring-1 ring-[#c8a84e]/40">♜</span>
+          <span className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-[#a43a39] to-[#4b1219] ring-1 ring-[#c8a84e]/40"><GameIcon uri={charData?.banner ? (PLAYER_SHIELDS[charData.banner] ?? BANNER_FALLBACK) : BANNER_FALLBACK} size={28} tile={false} /></span>
           <span className="text-left">
             <span className="block text-[8px] uppercase tracking-[0.35em] text-[#c8a84e]">House {charData?.houseName ?? "Sheatsley"}</span>
             <span className="block text-[13px] font-semibold leading-tight">{g.rank} of Hearthmere</span>
@@ -1927,48 +1927,41 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
             const rate = seasonRateMemo[k] ?? 0;
             return (
               <div key={k} className="flex flex-col items-center px-2" title={`${k}: ${Math.round(g.res[k])} (${rate >= 0 ? "+" : ""}${rate.toFixed(1)}/season)`}>
-                <span className="text-[13px] leading-none">{RICONS[k]}</span>
+                <span className="flex items-center leading-none"><GameIcon uri={RICONS[k]} size={14} /></span>
                 <span className="mt-0.5 text-[12px] font-semibold tabular-nums leading-none">{Math.floor(g.res[k])}</span>
                 <span className={`text-[9px] tabular-nums leading-none ${rate >= 0 ? "text-emerald-400" : "text-red-400"}`}>{rate >= 0 ? "+" : ""}{rate.toFixed(0)}</span>
               </div>
             );
           })}
           <div className="mx-1 h-8 w-px bg-white/10" />
-          <div className="flex flex-col items-center px-2"><span className="text-[13px] leading-none">👥</span><span className="mt-0.5 text-[12px] font-semibold leading-none">{g.pop}</span><span className="text-[9px] text-[#8d8674]">/{g.popCap}</span></div>
-          <div className="flex flex-col items-center px-2"><span className="text-[13px] leading-none">🛡</span><span className="mt-0.5 text-[12px] font-semibold leading-none">{g.army.militia + g.army.archers + g.army.spearmen + g.army.knights}</span><span className="text-[9px] text-[#8d8674]">host</span></div>
+          <div className="flex flex-col items-center px-2"><span className="flex items-center leading-none"><GameIcon uri={UI_ICONS.pop} size={14} tile={false} /></span><span className="mt-0.5 text-[12px] font-semibold leading-none">{g.pop}</span><span className="text-[9px] text-[#8d8674]">/{g.popCap}</span></div>
+          <div className="flex flex-col items-center px-2"><span className="flex items-center leading-none"><GameIcon uri={UI_ICONS.host} size={14} tile={false} /></span><span className="mt-0.5 text-[12px] font-semibold leading-none">{g.army.militia + g.army.archers + g.army.spearmen + g.army.knights}</span><span className="text-[9px] text-[#8d8674]">host</span></div>
         </div>
 
         <div data-ui="1" className="pointer-events-auto flex flex-col gap-1">
           <div className="flex gap-1">
-            <button onClick={saveGame} title="Ctrl+S to save" className={`btn-press rounded-lg px-3 py-1.5 text-[10px] font-semibold ring-1 transition ${syncStatus === "syncing" ? "bg-amber-950/70 text-amber-200 ring-amber-400/20 sync-pulse" : syncStatus === "synced" ? "bg-emerald-950/70 text-emerald-200 ring-emerald-400/20" : "bg-emerald-950/70 text-emerald-200 ring-emerald-400/20 hover:bg-emerald-900/70"}`}>{auth.user ? (syncStatus === "syncing" ? "⏳ Saving…" : syncStatus === "synced" ? "☁ Saved" : "☁ Save") : "Save"}</button>
+            <button onClick={saveGame} title="Ctrl+S to save" className={`btn-press rounded-lg px-3 py-1.5 text-[10px] font-semibold ring-1 transition ${syncStatus === "syncing" ? "bg-amber-950/70 text-amber-200 ring-amber-400/20 sync-pulse" : syncStatus === "synced" ? "bg-emerald-950/70 text-emerald-200 ring-emerald-400/20" : "bg-emerald-950/70 text-emerald-200 ring-emerald-400/20 hover:bg-emerald-900/70"}`}>{auth.user ? (syncStatus === "syncing" ? <span className="flex items-center justify-center gap-1"><GameIcon uri={UI_ICONS.hourglass} size={11} tile={false} />Saving…</span> : <span className="flex items-center justify-center gap-1"><GameIcon uri={UI_ICONS.save} size={11} tile={false} />{syncStatus === "synced" ? "Saved" : "Save"}</span>) : "Save"}</button>
             <button onClick={loadGame} title="Ctrl+L to load" className="btn-press rounded-lg bg-sky-950/70 px-3 py-1.5 text-[10px] font-semibold text-sky-200 ring-1 ring-sky-400/20 transition hover:bg-sky-900/70">Load</button>
             <button onClick={reset} title="Start a new dynasty" className="btn-press rounded-lg bg-red-950/70 px-3 py-1.5 text-[10px] font-semibold text-red-200 ring-1 ring-red-400/20 transition hover:bg-red-900/70">New</button>
             {auth.user
-              ? <button onClick={auth.logout} title={auth.user.email} className="rounded-lg bg-white/6 px-3 py-1.5 text-[10px] font-semibold text-[#eee4d0] hover:bg-white/12">👤 Sign out</button>
+              ? <button onClick={auth.logout} title={auth.user.email} className="rounded-lg bg-white/6 px-3 py-1.5 text-[10px] font-semibold text-[#eee4d0] transition hover:bg-white/12">Sign out</button>
               : <button onClick={() => auth.setShowAuth(true)} className="rounded-lg bg-[#c8a84e]/20 px-3 py-1.5 text-[10px] font-semibold text-[#c8a84e] ring-1 ring-[#c8a84e]/30 hover:bg-[#c8a84e]/30">Sign in</button>}
           </div>
-          <button onClick={() => toggle("Realm")} className="rounded-lg bg-white/6 px-3 py-1.5 text-[10px] font-semibold hover:bg-white/12">🗺 Realm Directory</button>
+          <button onClick={() => toggle("Realm")} className="rounded-lg bg-white/6 px-3 py-1.5 text-[10px] font-semibold transition hover:bg-white/12">Realm Directory</button>
         </div>
       </header>
 
       {/* ════ DOCK ════ */}
-      <nav data-ui="1" className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-0.5 rounded-2xl border border-white/8 bg-[#0e0d0b]/90 p-1.5 shadow-[0_16px_50px_rgba(0,0,0,.55)] backdrop-blur-2xl">
-        {(g.rank === "King of the Realm" || g.rank === "Regional Lord") && <button onClick={() => toggle("Crown")} className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[12px] font-semibold transition ${panel === "Crown" ? "bg-[#c8a84e] text-[#1a1611]" : "bg-amber-900/60 text-amber-200 hover:bg-amber-800/60"}`}><span>♚</span>Crown</button>}
-        {([["Build","🏗"],["Training","⚔️"],["Council","👑"],["Trade","⚖️"],["War","🗡️"],["Faith","🕯"],["Factions","🤝"],["Resources","📦"],["Chronicle","📖"]] as const).map(([id, ic]) => (
-          <button key={id} onClick={() => toggle(id)} className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[12px] font-semibold transition ${panel === id ? "bg-[#c8a84e] text-[#1a1611]" : "hover:bg-white/8"}`}><span>{ic}</span>{id}</button>
-        ))}
-        <span className="mx-1 h-6 w-px bg-white/10" />
-        <button onClick={() => center(home.x, home.y, 1.2)} className="flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[12px] font-semibold hover:bg-white/8">⌂ Home</button>
-      </nav>
+      <Dock panel={panel} rank={g.rank} onToggle={toggle} onHome={onHomeDock} />
 
-      <div className="pointer-events-none absolute bottom-[74px] left-1/2 z-20 -translate-x-1/2 rounded-full bg-black/55 px-5 py-1.5 text-center text-[11px] text-[#eee4d0]/85 backdrop-blur">{notice}</div>
+      <div key={notice} className="fade-in-up pointer-events-none absolute bottom-[74px] left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/55 px-5 py-1.5 text-center text-[11px] text-[#eee4d0]/85 backdrop-blur">{notice}</div>
 
       {/* ════ MINIMAP ════ */}
       <div data-ui="1" className="absolute bottom-4 right-4 z-30 w-52 rounded-2xl border border-white/8 bg-[#0e0d0b]/88 p-2 shadow-xl backdrop-blur-xl">
         <div className="mb-1 flex justify-between px-0.5 text-[9px] uppercase tracking-wider text-[#8d8674]"><span>The Realm</span><span>{Math.round(cam.z * 100)}%</span></div>
         <div className="relative h-32 w-full cursor-crosshair overflow-hidden rounded-lg" onClick={onMini}>
           <div className="absolute inset-0 opacity-55"><RealmMapCanvas atWar={g.atWar} baronies={g.baronies} roads={g.roads ?? []} settlements={g.settlements} camX={0} camY={0} zoom={1} staticMode exploredHexes={g.exploredHexes} /></div>
-          {g.baronies.map(b => <span key={b.id} className="absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full" style={{ left: `${b.x / W * 100}%`, top: `${b.y / H * 100}%`, background: g.atWar.includes(b.id) ? "#e05a4a" : g.alliances.some(a => a.bid === b.id) ? "#57c07a" : b.color }} />)}
+          <MinimapDots baronies={g.baronies} atWar={g.atWar} alliances={g.alliances} />
           <span className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#c8a84e] bg-[#6b1f1f]" style={{ left: `${home.x / W * 100}%`, top: `${home.y / H * 100}%` }} />
           <div className="absolute border-2 border-[#c8a84e]/90 bg-[#c8a84e]/10" style={{ left: `${cam.x / W * 100}%`, top: `${cam.y / H * 100}%`, width: `${Math.min(100, vW / W * 100)}%`, height: `${Math.min(100, vH / H * 100)}%` }} />
         </div>
@@ -1995,33 +1988,33 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
             <button onClick={() => setPanel(null)} className="rounded-full bg-white/6 px-3 py-1 text-[11px] hover:bg-white/12">✕</button>
           </div>
 
-          {panel === "House" && <HousePanel g={g} living={living} center={center} home={home} setPanel={setPanel} houseName={charData?.houseName ?? "Sheatsley"} bannerIcon={charData?.banner ? { Lion: "🦁", Eagle: "🦅", Oak: "🌳", Wolf: "🐺", Crown: "♚" }[charData.banner] : "♜"} rulerPortrait={charData?.portrait} />}
+          {panel === "House" && <HousePanel g={g} living={living} center={center} home={home} setPanel={setPanel} houseName={charData?.houseName ?? "Sheatsley"} bannerIcon={charData?.banner ? (PLAYER_SHIELDS[charData.banner] ?? BANNER_FALLBACK) : BANNER_FALLBACK} rulerPortrait={charData?.portrait} />}
           {panel === "Family" && <div className="flex gap-3 overflow-x-auto pb-2">{g.family.map((m, i) => <div key={m.id} className={`w-32 shrink-0 rounded-2xl border p-3 text-center ${m.status === "Dead" ? "border-white/5 opacity-50" : "border-white/8 bg-white/3"}`}><img src={portrait(m, i, charData?.portrait)} alt={m.name} className="mx-auto h-16 w-14 rounded-lg object-cover" onError={(e) => { (e.target as HTMLImageElement).src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='64'%3E%3Crect fill='%233a2a1a' width='56' height='64' rx='8'/%3E%3Ctext x='28' y='42' text-anchor='middle' fill='%23c8a84e' font-size='24' font-family='sans-serif'%3E${encodeURIComponent(m.name.split(" ")[0][0])}%3C/text%3E%3C/svg%3E`; }} /><p className="mt-1 text-[12px] font-semibold">{m.name}</p><p className="text-[10px] text-[#bbb5a0]">{m.role}</p><p className="text-[10px] text-[#c8a84e]">{m.status === "Dead" ? "Deceased" : `Age ${m.age}`}</p></div>)}<div className="flex w-32 shrink-0 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 text-[11px] text-[#8d8674]"><span className="text-xl">?</span>continues…</div></div>}
-          {panel === "Citizens" && <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{g.citizens.filter(c => c.sid === home.id).map(c => { const st = OCC_STYLE[c.occ]; return <button key={c.id} onClick={() => { pickC(c); center(home.x, home.y, 1.3); }} className="flex items-center gap-2 rounded-xl bg-white/3 px-3 py-2 text-left transition hover:bg-white/7"><span className="grid h-7 w-7 place-items-center rounded-full text-[11px]" style={{ background: st?.tunic }}>{st?.tool}</span><span><span className="block text-[12px] font-medium">{c.name}</span><span className="text-[10px] text-[#bbb5a0]">{c.occ} · {c.age}</span></span></button>; })}</div>}
+          {panel === "Citizens" && <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{g.citizens.filter(c => c.sid === home.id).map(c => { const st = OCC_STYLE[c.occ]; return <button key={c.id} onClick={() => { pickC(c); center(home.x, home.y, 1.3); }} className="flex items-center gap-2 rounded-xl bg-white/3 px-3 py-2 text-left transition hover:bg-white/7"><span className="grid h-7 w-7 place-items-center rounded-full" style={{ background: st?.tunic }}><GameIcon uri={st?.tool} size={16} tile={false} /></span><span><span className="block text-[12px] font-medium">{c.name}</span><span className="text-[10px] text-[#bbb5a0]">{c.occ} · {c.age}</span></span></button>; })}</div>}
           {panel === "Alerts" && <div className="grid gap-6 md:grid-cols-2"><div><h3 className="mb-2 text-[11px] uppercase tracking-wider text-[#c8a84e]">Alerts</h3><ul className="space-y-1 text-[12px]">{alerts.map(a => <li key={a} className="rounded-xl bg-white/3 px-3 py-2">• {a}</li>)}</ul></div><div><h3 className="mb-2 text-[11px] uppercase tracking-wider text-[#c8a84e]">Recent</h3><ul className="space-y-1 text-[12px]">{g.chronicle.slice(0, 7).map(e => <li key={e.id} className="rounded-xl bg-white/3 px-3 py-2"><strong className="text-[#c8a84e]">{e.title}</strong> <span className="text-[#bbb5a0]">{e.text}</span></li>)}</ul></div></div>}
           {panel === "Build" && <div>
             <div className="mb-3 flex items-center gap-2">
-              <button onClick={() => { setBuildMode(!buildMode); setPlaceBuildId(null); ghostRef.current = null; }} className={`rounded-xl px-4 py-2 text-[12px] font-semibold transition ${buildMode ? "bg-[#c8a84e] text-[#1a1611]" : "bg-white/6 text-[#eee4d0] hover:bg-white/12"}`}>🗺 {buildMode ? "Exit Map Mode" : "Place on Map"}</button>
+              <button onClick={() => { setBuildMode(!buildMode); setPlaceBuildId(null); ghostRef.current = null; }} className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-[12px] font-semibold transition ${buildMode ? "bg-[#c8a84e] text-[#1a1611]" : "bg-white/6 text-[#eee4d0] hover:bg-white/12"}`}><GameIcon uri={UI_ICONS.map} size={14} tile={false} />{buildMode ? "Exit Map Mode" : "Place on Map"}</button>
               {buildMode && <span className="text-[11px] text-[#8d8674]">Select a building below, then click the map near your settlement to place it.</span>}
             </div>
             {buildMode && placeBuildId && <div className="mb-3 flex items-center gap-2"><span className="text-[11px] text-[#c8a84e]">Placing: <strong>{BUILDS.find(b => b.id === placeBuildId)?.name}</strong></span><button onClick={() => { setPlaceBuildId(null); ghostRef.current = null; }} className="rounded-lg bg-white/6 px-2 py-1 text-[10px] hover:bg-white/12">Cancel</button></div>}
-            <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">{BUILDS.map(t => { const ex = g.buildings.find(b => b.id === t.id); const lv = ex?.level ?? 0; const nxt = lv + 1; const sc = Object.fromEntries(Object.entries(t.cost).map(([k, v]) => [k, Math.ceil((v ?? 0) * nxt)])) as Partial<Res>; const aff = afford(g.res, sc); const isSelected = buildMode && placeBuildId === t.id; return <button key={t.id} onClick={() => { if (buildMode) { setPlaceBuildId(t.id); ghostRef.current = null; } else { build(t); } }} className={`rounded-2xl border p-3 text-left transition ${isSelected ? "border-[#c8a84e] bg-[#c8a84e]/15 ring-1 ring-[#c8a84e]/40" : aff ? "border-white/6 bg-white/3 hover:bg-white/7" : "border-red-400/15 bg-red-950/10 opacity-60"}`}><div className="flex justify-between"><span className="text-[13px] font-semibold">{BUILD_ICONS[t.id] ?? "🏗"} {t.name}</span><span className="rounded-full bg-[#c8a84e]/20 px-2 text-[10px] text-[#c8a84e]">Lv {lv}</span></div><p className="mt-1 text-[11px] text-[#bbb5a0]">{t.desc}</p><p className="mt-1 text-[10px] text-emerald-400">Lv {nxt}: {fmtD(t.prod)}</p><p className={`mt-1 text-[10px] ${aff ? "text-[#c8a84e]" : "text-red-400"}`}>Cost: {fmtD(sc)}</p>{buildMode && <p className="mt-1 text-[9px] text-[#8d8674]">Click to select → place on map</p>}</button>; })}</div>
-            {!buildMode && g.placedBuildings.filter(pb => pb.sid === g.selSid).length > 0 && <div className="mt-4 border-t border-white/8 pt-3"><p className="mb-2 text-[11px] uppercase tracking-wider text-[#8d8674]">Placed Buildings ({g.placedBuildings.filter(pb => pb.sid === g.selSid).length})</p><div className="flex flex-wrap gap-2">{g.placedBuildings.filter(pb => pb.sid === g.selSid).map(pb => <div key={pb.id} className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-[11px]"><span>{BUILD_ICONS[pb.buildId] ?? "🏗"}</span><span className="font-medium">{pb.name}</span><span className="text-[10px] text-[#8d8674]">Lv {pb.level}</span><button onClick={() => removeBuilding(pb.id)} className="ml-1 rounded-full bg-red-900/50 px-1.5 py-0.5 text-[9px] text-red-200 hover:bg-red-800/50">✕</button></div>)}</div></div>}
+            <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">{BUILDS.map(t => { const ex = g.buildings.find(b => b.id === t.id); const lv = ex?.level ?? 0; const nxt = lv + 1; const sc = Object.fromEntries(Object.entries(t.cost).map(([k, v]) => [k, Math.ceil((v ?? 0) * nxt)])) as Partial<Res>; const aff = afford(g.res, sc); const isSelected = buildMode && placeBuildId === t.id; return <button key={t.id} onClick={() => { if (buildMode) { setPlaceBuildId(t.id); ghostRef.current = null; } else { build(t); } }} className={`rounded-2xl border p-3 text-left transition ${isSelected ? "border-[#c8a84e] bg-[#c8a84e]/15 ring-1 ring-[#c8a84e]/40" : aff ? "border-white/6 bg-white/3 hover:bg-white/7" : "border-red-400/15 bg-red-950/10 opacity-60"}`}><div className="flex justify-between"><span className="flex items-center gap-1.5 text-[13px] font-semibold"><GameIcon uri={BUILD_ICONS[t.id] ?? BUILDING_FALLBACK} size={16} />{t.name}</span><span className="rounded-full bg-[#c8a84e]/20 px-2 text-[10px] text-[#c8a84e]">Lv {lv}</span></div><p className="mt-1 text-[11px] text-[#bbb5a0]">{t.desc}</p><p className="mt-1 text-[10px] text-emerald-400">Lv {nxt}: {fmtD(t.prod)}</p><p className={`mt-1 text-[10px] ${aff ? "text-[#c8a84e]" : "text-red-400"}`}>Cost: {fmtD(sc)}</p>{buildMode && <p className="mt-1 text-[9px] text-[#8d8674]">Click to select → place on map</p>}</button>; })}</div>
+            {!buildMode && g.placedBuildings.filter(pb => pb.sid === g.selSid).length > 0 && <div className="mt-4 border-t border-white/8 pt-3"><p className="mb-2 text-[11px] uppercase tracking-wider text-[#8d8674]">Placed Buildings ({g.placedBuildings.filter(pb => pb.sid === g.selSid).length})</p><div className="flex flex-wrap gap-2">{g.placedBuildings.filter(pb => pb.sid === g.selSid).map(pb => <div key={pb.id} className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-[11px]"><GameIcon uri={BUILD_ICONS[pb.buildId] ?? BUILDING_FALLBACK} size={14} /><span className="font-medium">{pb.name}</span><span className="text-[10px] text-[#8d8674]">Lv {pb.level}</span><button onClick={() => removeBuilding(pb.id)} className="ml-1 rounded-full bg-red-900/50 px-1.5 py-0.5 text-[9px] text-red-200 hover:bg-red-800/50">✕</button></div>)}</div></div>}
           </div>}
           {panel === "Training" && <div className="grid gap-3 md:grid-cols-3"><AC t="Muster Militia" b="Drill defenders with food, weapons and silver." bt="Train" fn={trainAct} /><AC t="Tactical Doctrine" b={`Doctrine favours ${g.ruler.path}.`} bt="Study" fn={trainAct} /><AC t="Border Watch" b="Post rangers to track rival movements." bt="Post" fn={trainAct} /></div>}
-          {panel === "Council" && <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4"><AC t="Merciful Judgment" b="Raise trust, reduce fear." bt="Judge" fn={() => council("mercy")} /><AC t="Open Trade" b="Invite merchants and foreign coin." bt="Invite" fn={() => council("trade")} /><AC t="Honour Old Faith" b="Strengthen tradition." bt="Gather" fn={() => council("tradition")} /><AC t="Send Envoys" b="Improve relations broadly." bt="Dispatch" fn={() => council("envoys")} /><AC t={`Propose Marriage to ${selB.house}`} b="Seal a betrothal alliance. 30 silver, 15+ relations." bt="💍 Propose" fn={() => proposeBetrothal(selB.id)} /><BetrothalPanel g={g} />
+          {panel === "Council" && <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4"><AC t="Merciful Judgment" b="Raise trust, reduce fear." bt="Judge" fn={() => council("mercy")} /><AC t="Open Trade" b="Invite merchants and foreign coin." bt="Invite" fn={() => council("trade")} /><AC t="Honour Old Faith" b="Strengthen tradition." bt="Gather" fn={() => council("tradition")} /><AC t="Send Envoys" b="Improve relations broadly." bt="Dispatch" fn={() => council("envoys")} /><AC t={`Propose Marriage to ${selB.house}`} b="Seal a betrothal alliance. 30 silver, 15+ relations." bt={<span className="flex items-center justify-center gap-1.5"><GameIcon uri={ACTION_ICONS.betrothal} size={13} tile={false} />Propose</span>} fn={() => proposeBetrothal(selB.id)} /><BetrothalPanel g={g} />
             <div className="col-span-full border-t border-white/8 pt-3">
               <p className="mb-2 text-[10px] uppercase tracking-wider text-[#c8a84e]">Invoke the Six Pillars</p>
               <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
                 {DEITY_IDS.map(d => {
                   const info = DEITY_INFO[d];
                   const isPatron = PATH_DEITY[g.ruler.path] === d;
-                  return <AC key={d} t={`${info.icon} ${info.name}${isPatron ? " ★" : ""}`} b={`Invoke ${info.name} — ${info.domain}.`} bt="Invoke" fn={() => councilFaith(d)} />;
+                  return <AC key={d} t={<span className="flex items-center gap-1.5"><GameIcon uri={info.icon} size={14} />{info.name}{isPatron ? " ★" : ""}</span>} b={`Invoke ${info.name} — ${info.domain}.`} bt="Invoke" fn={() => councilFaith(d)} />;
                 })}
               </div>
               <p className="mt-2 text-[9px] text-[#8d8674]">★ marks your patron pillar — invoking it deepens your house's bond.</p>
             </div></div>}
-          {panel === "Resources" && <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7">{(Object.entries(g.res) as [RN, number][]).map(([k, v]) => { const liveRate = seasonRateMemo[k] ?? 0; return <div key={k} title={`${liveRate >= 0 ? "+" : ""}${liveRate.toFixed(1)} per season. ${RICONS[k]} ${k} is used for buildings, trade, and survival.`} className="rounded-2xl bg-white/3 p-3"><p className="text-[10px] uppercase tracking-wide text-[#8d8674]">{RICONS[k]} {k}</p><p className="text-xl font-bold tabular-nums">{Math.floor(v)}</p><p className={`text-[10px] tabular-nums ${liveRate >= 0 ? "text-emerald-400" : "text-red-400"}`}>{liveRate >= 0 ? "+" : ""}{liveRate.toFixed(1)}/season</p></div>; })}</div>}
+          {panel === "Resources" && <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7">{(Object.entries(g.res) as [RN, number][]).map(([k, v]) => { const liveRate = seasonRateMemo[k] ?? 0; return <div key={k} title={`${liveRate >= 0 ? "+" : ""}${liveRate.toFixed(1)} per season. ${k} is used for buildings, trade, and survival.`} className="rounded-2xl bg-white/3 p-3"><p className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[#8d8674]"><GameIcon uri={RICONS[k]} size={14} />{k}</p><p className="text-xl font-bold tabular-nums">{Math.floor(v)}</p><p className={`text-[10px] tabular-nums ${liveRate >= 0 ? "text-emerald-400" : "text-red-400"}`}>{liveRate >= 0 ? "+" : ""}{liveRate.toFixed(1)}/season</p></div>; })}</div>}
           {panel === "Chronicle" && <div><input value={cSearch} onChange={e => setCSearch(e.target.value)} placeholder="Search the Chronicle…" className="mb-3 w-full rounded-full border border-white/8 bg-white/4 px-4 py-2 text-[12px] outline-none placeholder:text-white/25 focus:border-[#c8a84e]/40" /><div className="mb-2 flex flex-wrap gap-1">{(["all","hope","glory","grief","warning","trade","faith"] as const).map(tone => <button key={tone} onClick={() => setCTone(tone)} className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition ${cTone === tone ? "bg-[#c8a84e] text-[#1a1611]" : "bg-white/6 hover:bg-white/10"}`}>{tone === "all" ? "All" : tone}</button>)}</div><div className="space-y-1.5 text-[12px]">{filtChron.slice(0, 200).map(e => <div key={e.id} className="rounded-xl bg-white/3 px-3 py-2"><span className="mr-2 text-[10px] text-[#8d8674]">Y{e.year} {e.season}</span><strong className="text-[#c8a84e]">{e.title}</strong> <span className="text-[#bbb5a0]">{e.text}</span></div>)}</div></div>}
           {panel === "Realm" && <RealmPanel g={g} search={rSearch} setSearch={setRSearch} pickB={pickB} center={center} />}
           {panel === "Trade" && <TradePanel g={g} selB={selB} send={sendCaravan} dip={dipAction} />}
@@ -2039,7 +2032,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       {g.evt && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/82 p-4">
           <div className="w-full max-w-lg overflow-hidden rounded-3xl border border-white/10 bg-[#0e0d0b] shadow-2xl">
-            {g.evt.crisis && <div className="flex h-44 w-full items-center justify-center bg-gradient-to-b from-red-950/50 to-[#0e0d0b] text-5xl">⚠</div>}
+            {g.evt.crisis && <div className="flex h-44 w-full items-center justify-center bg-gradient-to-b from-red-950/50 to-[#0e0d0b]"><GameIcon uri={UI_ICONS.warning} size={52} tile={false} /></div>}
             <div className="p-6">
               <p className="text-[9px] uppercase tracking-[0.35em] text-[#c8a84e]">Year {g.year} · {g.season}</p>
               <h2 className="mt-1 text-xl font-bold">{g.evt.title}</h2>
@@ -2077,7 +2070,7 @@ function HousePanel({ g, living, center, home, setPanel, houseName, bannerIcon, 
   return (
     <div className="grid gap-6 md:grid-cols-[290px_1fr]">
       <div className="space-y-4">
-        <div className="flex items-center gap-3"><span className="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-[#a43a39] to-[#4b1219] text-2xl ring-2 ring-[#c8a84e]/30">{bannerIcon}</span><div><h3 className="text-[15px] font-bold">House {houseName}</h3><p className="text-[11px] italic text-[#c8a84e]">&ldquo;{g.motto}&rdquo;</p></div></div>
+        <div className="flex items-center gap-3"><span className="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-[#a43a39] to-[#4b1219] ring-2 ring-[#c8a84e]/30"><GameIcon uri={bannerIcon} size={40} tile={false} /></span><div><h3 className="text-[15px] font-bold">House {houseName}</h3><p className="text-[11px] italic text-[#c8a84e]">&ldquo;{g.motto}&rdquo;</p></div></div>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[12px]">
           <p><span className="text-[#8d8674]">Ruler</span> {g.ruler.name}</p><p><span className="text-[#8d8674]">Age</span> {living.find(m => m.id === g.ruler.id)?.age ?? g.ruler.age}</p>
           <p><span className="text-[#8d8674]">Rank</span> {g.rank}</p><p><span className="text-[#8d8674]">Prestige</span> {g.prestige}</p>
@@ -2101,7 +2094,7 @@ function RealmPanel({ g, search, setSearch, pickB, center }: { g: GS; search: st
       <div className="grid gap-1.5 md:grid-cols-2 lg:grid-cols-3">
         {list.map(b => (
           <button key={b.id} onClick={() => { pickB(b); center(b.x, b.y, 0.75); }} className="flex items-center gap-2 rounded-xl bg-white/3 px-3 py-2 text-left transition hover:bg-white/7">
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[13px]" style={{ background: b.color }}>{b.banner}</span>
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full" style={{ background: b.color }}><GameIcon uri={BANNER_URI[b.banner] ?? BANNER_FALLBACK} size={18} tile={false} /></span>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[12px] font-semibold">{b.house}</span>
               <span className="block truncate text-[10px] text-[#bbb5a0]">{b.name} · {b.region}</span>
@@ -2124,13 +2117,13 @@ function TradePanel({ g, selB, send, dip }: { g: GS; selB: Barony; send: (r: RN)
     <div className="grid gap-6 lg:grid-cols-[1.25fr_.75fr]">
       <div>
         <div className="mb-3 flex items-center justify-between rounded-2xl bg-white/3 px-4 py-3">
-          <div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-full text-lg" style={{ background: selB.color }}>{selB.banner}</span><div><p className="text-[13px] font-semibold">{selB.house}</p><p className="text-[10px] text-[#bbb5a0]">{selB.name} · relations {selB.rel} · {allied ? allied.kind : "no pact"}</p></div></div>
-          <button onClick={() => dip("negotiate")} className="rounded-full bg-[#c8a84e] px-4 py-2 text-[11px] font-semibold text-[#1a1611]">Negotiate · 10🪙</button>
+          <div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-full" style={{ background: selB.color }}><GameIcon uri={BANNER_URI[selB.banner] ?? BANNER_FALLBACK} size={20} tile={false} /></span><div><p className="text-[13px] font-semibold">{selB.house}</p><p className="text-[10px] text-[#bbb5a0]">{selB.name} · relations {selB.rel} · {allied ? allied.kind : "no pact"}</p></div></div>
+          <button onClick={() => dip("negotiate")} className="flex items-center gap-1 rounded-full bg-[#c8a84e] px-4 py-2 text-[11px] font-semibold text-[#1a1611]">Negotiate · 10<GameIcon uri={RESOURCE_ICONS.silver} size={12} /></button>
         </div>
         <p className="mb-2 text-[11px] text-[#8d8674]">Living market — click a good to send a caravan (travel time scales with distance)</p>
         <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4">            {(Object.keys(g.prices) as RN[]).filter(k => k !== "silver").map(k => (
               <button key={k} onClick={() => send(k)} title={`Send a caravan of ${k} to ${selB.house}. Travel time varies by distance.`} className="rounded-xl bg-white/3 p-2.5 text-left transition hover:bg-white/7">
-              <div className="flex items-center justify-between text-[11px]"><span>{RICONS[k]}</span><span className="font-semibold text-[#c8a84e]">{g.prices[k]}🪙</span></div>
+              <div className="flex items-center justify-between text-[11px]"><GameIcon uri={RICONS[k]} size={14} /><span className="flex items-center gap-1 font-semibold text-[#c8a84e]">{g.prices[k]}<GameIcon uri={RESOURCE_ICONS.silver} size={12} /></span></div>
               <p className="mt-0.5 text-[11px] font-medium capitalize">{k}</p>
               <p className="text-[9px] text-[#8d8674]">stock {Math.floor(g.res[k])}</p>
             </button>
@@ -2141,15 +2134,15 @@ function TradePanel({ g, selB, send, dip }: { g: GS; selB: Barony; send: (r: RN)
         <div className="rounded-2xl bg-white/3 p-4">
           <h4 className="text-[11px] font-semibold uppercase tracking-wider text-[#c8a84e]">Pacts</h4>
           <div className="mt-2 grid grid-cols-2 gap-1.5">
-            <button onClick={() => dip("alliance")} className="rounded-lg bg-white/6 py-2 text-[11px] font-semibold hover:bg-white/12">Alliance · 25🪙</button>
-            <button onClick={() => dip("bloc")} className="rounded-lg bg-emerald-950/50 py-2 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-900/50">Trade bloc · 40🪙</button>
+            <button onClick={() => dip("alliance")} className="flex items-center gap-1 rounded-lg bg-white/6 py-2 text-[11px] font-semibold hover:bg-white/12">Alliance · 25<GameIcon uri={RESOURCE_ICONS.silver} size={12} /></button>
+            <button onClick={() => dip("bloc")} className="flex items-center gap-1 rounded-lg bg-emerald-950/50 py-2 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-900/50">Trade bloc · 40<GameIcon uri={RESOURCE_ICONS.silver} size={12} /></button>
           </div>
           {g.atWar.includes(selB.id) && <button onClick={() => dip("peace")} className="mt-1.5 w-full rounded-lg bg-sky-950/50 py-2 text-[11px] font-semibold text-sky-200 hover:bg-sky-900/50">Sue for peace</button>}
           <div className="mt-2 space-y-0.5 text-[11px] text-[#bbb5a0]">{g.alliances.length === 0 ? <p>No bonds yet.</p> : g.alliances.map(a => <p key={a.bid}>◆ {g.baronies.find(b => b.id === a.bid)?.house} — {a.kind}</p>)}</div>
         </div>
         <div className="rounded-2xl bg-white/3 p-4">
           <h4 className="text-[11px] font-semibold uppercase tracking-wider text-[#c8a84e]">Caravans on the road</h4>
-          <div className="mt-2 space-y-1 text-[11px] text-[#bbb5a0]">{g.caravans.length === 0 ? <p>None travelling.</p> : g.caravans.map(c => <p key={c.id}>{RICONS[c.resource]} {c.amount} → {g.baronies.find(b => b.id === c.tid)?.house} · {Math.ceil(c.days)}d · {c.silver}🪙</p>)}</div>
+          <div className="mt-2 space-y-1 text-[11px] text-[#bbb5a0]">{g.caravans.length === 0 ? <p>None travelling.</p> : g.caravans.map(c => <p key={c.id} className="flex items-center gap-1.5"><GameIcon uri={RICONS[c.resource]} size={14} />{c.amount} → {g.baronies.find(b => b.id === c.tid)?.house} · {Math.ceil(c.days)}d · {c.silver}<GameIcon uri={RESOURCE_ICONS.silver} size={11} /></p>)}</div>
         </div>
       </div>
     </div>
@@ -2164,7 +2157,7 @@ function WarPanel({ g, selB, recruit, recruitRoyalGuard, assignCpt, raid, start,
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {(["militia", "archers", "spearmen", "knights", "royalGuard"] as UnitType[]).map(u => (
             <button key={u} onClick={() => u === "royalGuard" ? recruitRoyalGuard() : recruit(u)} className="rounded-2xl bg-white/3 p-3 text-left transition hover:bg-white/7">
-              <p className="text-lg">{u === "militia" ? "🗡" : u === "archers" ? "🏹" : u === "spearmen" ? "🔱" : u === "royalGuard" ? "♚" : "♞"}</p>
+              <GameIcon uri={UNIT_ICONS[u]} size={26} />
               <p className="text-lg font-bold">{g.army[u]}</p><p className="text-[10px] capitalize text-[#bbb5a0]">{u === "royalGuard" ? "Royal Guard" : u}</p>
               <p className="mt-1 text-[9px] text-[#c8a84e]">recruit +5</p>
             </button>
@@ -2179,12 +2172,12 @@ function WarPanel({ g, selB, recruit, recruitRoyalGuard, assignCpt, raid, start,
       </div>
       <div className="rounded-3xl border border-red-400/12 bg-red-950/12 p-5">
         <p className="text-[10px] uppercase tracking-wider text-red-300">Target</p>
-        <div className="mt-1 flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-full text-lg" style={{ background: selB.color }}>{selB.banner}</span><div><h3 className="text-[15px] font-bold">{selB.house}</h3><p className="text-[11px] text-[#bbb5a0]">{selB.name} · military {selB.mil} · relations {selB.rel}</p></div></div>
+        <div className="mt-1 flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-full" style={{ background: selB.color }}><GameIcon uri={BANNER_URI[selB.banner] ?? BANNER_FALLBACK} size={20} tile={false} /></span><div><h3 className="text-[15px] font-bold">{selB.house}</h3><p className="text-[11px] text-[#bbb5a0]">{selB.name} · military {selB.mil} · relations {selB.rel}</p></div></div>
         <p className="mt-3 text-[11px] text-[#8d8674]">Battles open a live tactical field where you command each squad in real time.</p>
         <div className="mt-4 grid gap-2">
           <button onClick={raid} className="rounded-xl bg-amber-800/60 py-2.5 text-[12px] font-semibold text-amber-100 hover:bg-amber-700/60">Raid their caravans</button>
-          <button onClick={() => start("attack")} className="rounded-xl bg-red-800/85 py-2.5 text-[12px] font-semibold hover:bg-red-700/85">⚔ March to battle</button>
-          <button onClick={() => start("siege")} className="rounded-xl bg-white/5 py-2.5 text-[12px] font-semibold ring-1 ring-red-400/20 hover:bg-red-950/40">🏰 Lay siege</button>
+          <button onClick={() => start("attack")} className="flex items-center justify-center gap-2 rounded-xl bg-red-800/85 py-2.5 text-[12px] font-semibold hover:bg-red-700/85"><GameIcon uri={ACTION_ICONS.raid} size={14} tile={false} />March to battle</button>
+          <button onClick={() => start("siege")} className="flex items-center justify-center gap-2 rounded-xl bg-white/5 py-2.5 text-[12px] font-semibold ring-1 ring-red-400/20 hover:bg-red-950/40"><GameIcon uri={SETTLEMENT_ICONS.city} size={14} tile={false} />Lay siege</button>
           {g.atWar.includes(selB.id) && <button onClick={() => dip("peace")} className="rounded-xl bg-sky-950/50 py-2.5 text-[12px] font-semibold text-sky-200 hover:bg-sky-900/50">Sue for peace</button>}
         </div>
       </div>
@@ -2203,7 +2196,7 @@ function SettPanel({ s, b, g, center, setPanel, enterBuildMode }: { s: Settlemen
         <p className="text-[12px]">Ruled by <strong>{b.house}</strong> · relations {b.rel}</p>
         <div className="mt-3 flex flex-wrap gap-1.5">
           <button onClick={() => center(s.x, s.y, 1.5)} className="rounded-lg bg-[#c8a84e] px-3 py-1.5 text-[11px] font-semibold text-[#1a1611]">Zoom in</button>
-          {s.home ? <><button onClick={() => setPanel("Build")} className="rounded-lg bg-white/6 px-3 py-1.5 text-[11px] font-semibold hover:bg-white/12">Manage</button><button onClick={enterBuildMode} className="rounded-lg bg-[#c8a84e]/20 px-3 py-1.5 text-[11px] font-semibold text-[#c8a84e] ring-1 ring-[#c8a84e]/30 hover:bg-[#c8a84e]/30">🗺 Place Buildings</button></> : <>
+          {s.home ? <><button onClick={() => setPanel("Build")} className="rounded-lg bg-white/6 px-3 py-1.5 text-[11px] font-semibold hover:bg-white/12">Manage</button>            <button onClick={enterBuildMode} className="flex items-center gap-1.5 rounded-lg bg-[#c8a84e]/20 px-3 py-1.5 text-[11px] font-semibold text-[#c8a84e] ring-1 ring-[#c8a84e]/30 hover:bg-[#c8a84e]/30"><GameIcon uri={UI_ICONS.map} size={12} tile={false} />Place Buildings</button></> : <>
             <button onClick={() => setPanel("Trade")} className="rounded-lg bg-white/6 px-3 py-1.5 text-[11px] font-semibold hover:bg-white/12">Trade</button>
             <button onClick={() => setPanel("War")} className="rounded-lg bg-red-900/50 px-3 py-1.5 text-[11px] font-semibold text-red-200 hover:bg-red-800/50">War</button>
             <button onClick={() => setPanel("Barony")} className="rounded-lg bg-white/6 px-3 py-1.5 text-[11px] font-semibold hover:bg-white/12">Barony</button>
@@ -2220,7 +2213,7 @@ function BarPanel({ b, g, center, pickS, setPanel }: { b: Barony; g: GS; center:
   return (
     <div className="grid gap-5 md:grid-cols-[1fr_1fr]">
       <div>
-        <div className="flex items-center gap-3"><span className="grid h-12 w-12 place-items-center rounded-full text-xl" style={{ background: b.color }}>{b.banner}</span><div><h3 className="text-[15px] font-bold">{b.house}</h3><p className="text-[12px] text-[#c8a84e]">{b.name}</p></div></div>
+        <div className="flex items-center gap-3"><span className="grid h-12 w-12 place-items-center rounded-full" style={{ background: b.color }}><GameIcon uri={BANNER_URI[b.banner] ?? BANNER_FALLBACK} size={22} tile={false} /></span><div><h3 className="text-[15px] font-bold">{b.house}</h3><p className="text-[12px] text-[#c8a84e]">{b.name}</p></div></div>
         <p className="mt-2 text-[12px] italic text-[#8d8674]">&ldquo;{b.motto}&rdquo;</p>
         {b.story && <p className="mt-2 rounded-xl border-l-2 border-[#c8a84e]/30 bg-[#c8a84e]/5 px-3 py-2 text-[11px] leading-relaxed text-[#bbb5a0]">{b.story}</p>}
         <p className="mt-2 text-[12px]">{b.region} · seeks {b.ambition}</p>
@@ -2238,7 +2231,7 @@ function BarPanel({ b, g, center, pickS, setPanel }: { b: Barony; g: GS; center:
         <p className="mb-1 text-[10px] uppercase tracking-wider text-[#8d8674]">Holdings ({g.settlements.filter(s => s.bid === b.id).length})</p>
         <div className="space-y-1">{g.settlements.filter(s => s.bid === b.id).map(s => (
           <button key={s.id} onClick={() => { pickS(s); center(s.x, s.y, 1.2); }} className="flex w-full items-center justify-between rounded-xl bg-white/3 px-3 py-2 text-left text-[12px] hover:bg-white/7">
-            <span className="flex items-center gap-2"><span>{sIcon(s.type, s.home)}</span><span className="font-medium">{s.name}</span></span>
+            <span className="flex items-center gap-2"><GameIcon uri={sIcon(s.type, s.home)} size={16} tile={false} /><span className="font-medium">{s.name}</span></span>
             <span className="text-[10px] capitalize text-[#bbb5a0]">{s.type} · {s.pop}</span>
           </button>
         ))}</div>
@@ -2253,7 +2246,7 @@ function VillPanel({ c, g, center, tab, setTab }: { c: Citizen; g: GS; center: (
   return (
     <div className="grid gap-5 md:grid-cols-[250px_1fr]">
       <div>
-        <div className="flex items-center gap-3"><span className="grid h-12 w-12 place-items-center rounded-full text-lg" style={{ background: st.tunic }}>{st.tool}</span><div><h3 className="text-[15px] font-bold">{c.name}</h3><p className="text-[12px] text-[#bbb5a0]">{c.occ} · age {c.age}</p></div></div>
+        <div className="flex items-center gap-3"><span className="grid h-12 w-12 place-items-center rounded-full" style={{ background: st.tunic }}><GameIcon uri={st.tool} size={24} tile={false} /></span><div><h3 className="text-[15px] font-bold">{c.name}</h3><p className="text-[12px] text-[#bbb5a0]">{c.occ} · age {c.age}</p></div></div>
         <p className="mt-2 text-[11px] text-[#8d8674]">Traits: {c.traits.join(", ")}</p>
         <p className="text-[11px] text-[#bbb5a0]">Lives in {s?.name}</p>
         <Meter l="Mood" v={c.mood} />
@@ -2278,7 +2271,7 @@ function BetrothalPanel({ g }: { g: GS }) {
       {g.betrothals.slice(-6).reverse().map(b => (
         <div key={b.id} className="flex items-center gap-2 rounded-lg bg-white/3 px-3 py-1.5 text-[11px]">
           <span className={b.kind === "accepted" ? "text-emerald-400" : b.kind === "rejected" ? "text-red-400" : "text-amber-400"}>
-            {b.kind === "accepted" ? "💍" : b.kind === "rejected" ? "✗" : "⌛"}
+            {b.kind === "accepted" ? <GameIcon uri={ACTION_ICONS.betrothal} size={14} tile={false} /> : b.kind === "rejected" ? <span>✗</span> : <GameIcon uri={UI_ICONS.hourglass} size={14} tile={false} />}
           </span>
           <span className="text-[#bbb5a0]">
             {b.fromUs ? "→" : "←"} {b.house}
@@ -2300,8 +2293,8 @@ function FactionRepPanel({ g, home }: { g: GS; home: Settlement }) {
   });
   const sorted = [...reps].sort((a, b) => a.trust - b.trust);
   const actionIcon: Record<ActionType, string> = {
-    raid: "⚔", war_victory: "🏆", war_defeat: "💀", alliance_formed: "🤝", alliance_broken: "💔",
-    peace: "🕊", negotiate: "💬", trade_gift: "📦", betrothal: "💍", vassal: "👑", betrayal: "🗡",
+    raid: ACTION_ICONS.raid, war_victory: ACTION_ICONS.war_victory, war_defeat: ACTION_ICONS.war_defeat, alliance_formed: ACTION_ICONS.alliance_formed, alliance_broken: ACTION_ICONS.alliance_broken,
+    peace: ACTION_ICONS.peace, negotiate: ACTION_ICONS.negotiate, trade_gift: ACTION_ICONS.trade_gift, betrothal: ACTION_ICONS.betrothal, vassal: ACTION_ICONS.vassal, betrayal: ACTION_ICONS.betrayal,
   };
   const toneColor = (t: string) => t === "grief" ? "text-red-400" : t === "warning" ? "text-amber-400" : t === "glory" ? "text-emerald-400" : "text-sky-400";
   return (
@@ -2318,7 +2311,7 @@ function FactionRepPanel({ g, home }: { g: GS; home: Settlement }) {
             <div key={fr.bid} className={`rounded-2xl border p-4 transition ${isWar ? "border-red-500/30 bg-red-950/15" : isAllied ? "border-emerald-500/20 bg-emerald-950/10" : "border-white/6 bg-white/3"}`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[12px]" style={{ background: b.color }}>{b.banner}</span>
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full" style={{ background: b.color }}><GameIcon uri={BANNER_URI[b.banner] ?? BANNER_FALLBACK} size={18} tile={false} /></span>
                   <div>
                     <p className="text-[12px] font-semibold">{b.house}</p>
                     <p className="text-[10px] text-[#8d8674]">{b.name} · {b.region}</p>
@@ -2345,7 +2338,7 @@ function FactionRepPanel({ g, home }: { g: GS; home: Settlement }) {
               {fr.genGrudges.filter(g2 => !g2.decayed).length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1">
                   {fr.genGrudges.filter(g2 => !g2.decayed).map((gr, i) => (
-                    <span key={i} className="rounded-full bg-red-950/40 px-2 py-0.5 text-[9px] text-red-300" title={`Born year ${gr.born}`}>🗡 {gr.text.slice(0, 40)}{gr.text.length > 40 ? "…" : ""}</span>
+                    <span key={i} className="flex items-center gap-1 rounded-full bg-red-950/40 px-2 py-0.5 text-[9px] text-red-300" title={`Born year ${gr.born}`}><GameIcon uri={ACTION_ICONS.betrayal} size={10} tile={false} />{gr.text.slice(0, 40)}{gr.text.length > 40 ? "…" : ""}</span>
                   ))}
                 </div>
               )}
@@ -2361,7 +2354,7 @@ function FactionRepPanel({ g, home }: { g: GS; home: Settlement }) {
             {fr.actions.length === 0 && <p className="text-[11px] text-[#8d8674]">No recorded interactions yet.</p>}
             {fr.actions.map((a, i) => (
               <div key={i} className="flex items-center gap-2 rounded-xl bg-white/3 px-3 py-2">
-                <span className="text-lg">{actionIcon[a.action] ?? "•"}</span>
+                <span className="grid h-7 w-7 shrink-0 place-items-center"><GameIcon uri={actionIcon[a.action]} size={18} tile={false} /></span>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[11px] text-[#bbb5a0]">{a.text}</p>
                   <p className="text-[9px] text-[#8d8674]">Year {a.year} · {a.season} · magnitude {a.magnitude}</p>
@@ -2441,11 +2434,11 @@ function CrownPanel({ g, grantTitle, resolveCrisis, recruitRoyalGuard }: { g: GS
                 <div key={v.bid} className={`flex items-center justify-between rounded-xl px-3 py-2 ${v.loyalty < 25 ? "bg-red-950/20" : "bg-white/3"}`}>
                   <div>
                     <p className="text-[12px] font-semibold">{barony?.house ?? v.bid}</p>
-                    <p className="text-[10px] text-[#bbb5a0]">{v.title} · tribute {v.tribute}🪙/season</p>
+                    <p className="flex items-center gap-1 text-[10px] text-[#bbb5a0]">{v.title} · tribute {v.tribute}<GameIcon uri={RESOURCE_ICONS.silver} size={10} />/season</p>
                   </div>
                   <div className="text-right">
                     <span className={`text-[11px] font-bold ${v.loyalty > 60 ? "text-emerald-400" : v.loyalty > 30 ? "text-[#c8a84e]" : "text-red-400"}`}>{v.loyalty}% loyal</span>
-                    {g.civilWarActive && v.loyalty < 25 && <span className="ml-1 text-[9px] text-red-400">⚔</span>}
+                    {g.civilWarActive && v.loyalty < 25 && <span className="ml-1 text-[9px] text-red-400"><GameIcon uri={ACTION_ICONS.raid} size={9} tile={false} /></span>}
                   </div>
                 </div>
               );
@@ -2455,7 +2448,7 @@ function CrownPanel({ g, grantTitle, resolveCrisis, recruitRoyalGuard }: { g: GS
 
         {g.civilWarActive && (
           <div className="mt-3 rounded-2xl border border-red-400/20 bg-red-950/15 p-4">
-            <p className="text-[11px] font-semibold text-red-300">⚔ Continental Civil War</p>
+            <p className="flex items-center gap-1.5 text-[11px] font-semibold text-red-300"><GameIcon uri={ACTION_ICONS.raid} size={13} tile={false} />Continental Civil War</p>
             <p className="mt-1 text-[10px] text-[#bbb5a0]">The Realm burns. Crush the rebels or negotiate peace to restore order.</p>
           </div>
         )}
@@ -2521,7 +2514,7 @@ function FaithPanel({ g, worship, councilFaith, rulerPath }: { g: GS; worship: (
               <div className="flex items-start gap-3">
                 <img src={DEITY_SVGS[d]} alt={info.name} className="h-14 w-14 rounded-xl object-cover ring-1 ring-white/10" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-semibold leading-tight">{info.icon} {info.name}{isPatron ? " <span className='text-[#c8a84e]'>★</span>" : ""}{isDom ? " <span className='text-[10px] text-emerald-400'>· Dominion</span>" : ""}</p>
+                  <p className="flex items-center gap-1.5 text-[13px] font-semibold leading-tight"><GameIcon uri={info.icon} size={14} />{info.name}{isPatron && <span className="text-[#c8a84e]">★</span>}{isDom && <span className="text-[10px] text-emerald-400">· Dominion</span>}</p>
                   <p className="text-[9px] uppercase tracking-wider text-[#8d8674]">{info.title}</p>
                   <p className="mt-0.5 text-[10px] text-[#bbb5a0]">{info.domain}</p>
                 </div>
@@ -2534,7 +2527,7 @@ function FaithPanel({ g, worship, councilFaith, rulerPath }: { g: GS; worship: (
               <div className="mt-3 flex flex-wrap gap-1.5">
                 <button onClick={() => worship(d)} disabled={!affordIt} className={`flex-1 rounded-lg px-3 py-1.5 text-[10px] font-semibold transition ${affordIt ? "bg-[#c8a84e] text-[#1a1611] hover:brightness-110" : "cursor-not-allowed bg-white/6 text-[#8d8674] opacity-50"}`}>Worship · {fmtD(cost)}</button>
                 <button onClick={() => councilFaith(d)} className="rounded-lg bg-white/6 px-3 py-1.5 text-[10px] font-semibold hover:bg-white/12">Invoke</button>
-                <button onClick={() => setLegend(legend === d ? null : d)} className="rounded-lg bg-white/4 px-3 py-1.5 text-[10px] font-semibold text-[#8d8674] hover:bg-white/8">📖 Legend</button>
+                <button onClick={() => setLegend(legend === d ? null : d)} className="flex items-center gap-1.5 rounded-lg bg-white/4 px-3 py-1.5 text-[10px] font-semibold text-[#8d8674] hover:bg-white/8"><GameIcon uri={DEITY_GLYPHS.morvath} size={12} />Legend</button>
               </div>
               {legend === d && (
                 <div className="mt-3 space-y-2 rounded-xl border border-[#c8a84e]/20 bg-[#1a1611]/60 p-3">
@@ -2567,6 +2560,107 @@ function FaithPanel({ g, worship, councilFaith, rulerPath }: { g: GS; worship: (
     </div>
   );
 }
-function AC({ t, b, bt, fn }: { t: string; b: string; bt: string; fn: () => void }) {
-  return <div className="rounded-2xl border border-white/6 bg-white/3 p-4"><h3 className="text-[13px] font-semibold text-[#c8a84e]">{t}</h3><p className="mt-1 text-[11px] text-[#bbb5a0]">{b}</p><button onClick={fn} className="mt-3 rounded-lg bg-[#c8a84e] px-4 py-1.5 text-[11px] font-semibold text-[#1a1611]">{bt}</button></div>;
+function AC({ t, b, bt, fn }: { t: React.ReactNode; b: string; bt: React.ReactNode; fn: () => void }) {
+  return <div className="rounded-2xl border border-white/6 bg-white/3 p-4"><h3 className="flex items-center gap-1.5 text-[13px] font-semibold text-[#c8a84e]">{t}</h3><p className="mt-1 text-[11px] text-[#bbb5a0]">{b}</p><button onClick={fn} className="mt-3 rounded-lg bg-[#c8a84e] px-4 py-1.5 text-[11px] font-semibold text-[#1a1611]">{bt}</button></div>;
 }
+
+/* ───────── memoized map markers & chrome ─────────
+   Entity objects (settlements/baronies/citizens/buildings) keep their identity
+   across simulation ticks, and handlers here are referentially stable, so
+   React.memo lets the 60fps game clock skip reconciling these subtrees unless
+   a marker's own data actually changed. */
+type HoverInfo = { x: number; y: number; label: string; sub: string };
+
+const SettlementArt = memo(function SettlementArt({ s, house, selected, onPick, onHover, onLeave }: { s: Settlement; house: string; selected: boolean; onPick: (s: Settlement) => void; onHover: (h: HoverInfo) => void; onLeave: () => void }) {
+  const size = sArt(s.type, s.home);
+  return (
+    <button data-ui="1" onClick={() => onPick(s)} onPointerEnter={() => onHover({ x: s.x, y: s.y, label: s.name, sub: `${s.type} · ${house}` })} onPointerLeave={onLeave}
+      className="absolute -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[46%] transition hover:brightness-110"
+      style={{ left: s.x, top: s.y, width: size, height: size * 0.68, zIndex: 5, boxShadow: selected ? "0 0 0 4px rgba(200,168,78,.7), 0 30px 70px rgba(0,0,0,.55)" : "0 24px 60px rgba(0,0,0,.5)" }}>
+      <img src={sImg(s.type, s.home)} alt={s.name} loading="lazy" decoding="async" className="h-full w-full object-cover" draggable={false} />
+      <span className="absolute inset-0" style={{ background: "radial-gradient(ellipse at center, transparent 52%, rgba(10,9,8,.85) 88%)" }} />
+    </button>
+  );
+});
+
+const SettlementMarker = memo(function SettlementMarker({ s, house, selected, showName, yOffset, nameFont, onPick, onDbl, onHover, onLeave }: { s: Settlement; house: string; selected: boolean; showName: boolean; yOffset: number; nameFont: number; onPick: (s: Settlement) => void; onDbl: (s: Settlement) => void; onHover: (h: HoverInfo) => void; onLeave: () => void }) {
+  const size = s.home ? 34 : s.type === "city" ? 32 : s.type === "town" ? 28 : s.type === "village" ? 24 : 20;
+  return (
+    <button data-ui="1" onClick={() => onPick(s)} onDoubleClick={() => onDbl(s)}
+      onPointerEnter={() => onHover({ x: s.x, y: s.y, label: s.name, sub: `${s.type} · ${house}` })} onPointerLeave={onLeave}
+      className="absolute flex -translate-x-1/2 flex-col items-center" style={{ left: s.x, top: s.y - yOffset, zIndex: 16 }}>
+      <span className="grid place-items-center rounded-full shadow-xl transition hover:scale-110" style={{ width: size, height: size, background: s.home ? "#6b1f1f" : "rgba(20,18,15,.9)", border: selected ? "2.5px solid #c8a84e" : s.home ? "2.5px solid #c8a84e" : "2px solid rgba(200,168,78,.4)" }}><GameIcon uri={sIcon(s.type, s.home)} size={size * 0.56} tile={false} /></span>
+      {showName && <span className="mt-1 whitespace-nowrap rounded-full bg-black/75 px-2.5 py-0.5 font-semibold text-[#eee4d0]" style={{ fontSize: nameFont }}>{s.name}</span>}
+    </button>
+  );
+});
+
+const BaronyCrest = memo(function BaronyCrest({ b, selected, size, topOffset, allied, atWar, crestUri, onPick, onDbl, onHover, onLeave }: { b: Barony; selected: boolean; size: number; topOffset: number; allied: boolean; atWar: boolean; crestUri: string; onPick: (b: Barony) => void; onDbl: (b: Barony) => void; onHover: (h: HoverInfo) => void; onLeave: () => void }) {
+  return (
+    <button data-ui="1" onClick={() => onPick(b)} onDoubleClick={() => onDbl(b)}
+      onPointerEnter={() => onHover({ x: b.x, y: b.y - size, label: b.house, sub: `${b.name} · ${b.region}` })} onPointerLeave={onLeave}
+      className="absolute grid -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full shadow-2xl transition hover:scale-110"
+      style={{ left: b.x, top: b.y - topOffset, width: size, height: size, background: b.color, border: selected ? `${size * 0.07}px solid #c8a84e` : `${size * 0.05}px solid rgba(0,0,0,.55)`, zIndex: 18 }}>
+      <GameIcon uri={crestUri} size={size * 0.48} tile={false} />
+      {allied && <span className="absolute -bottom-1 -right-1 grid h-1/3 w-1/3 place-items-center rounded-full bg-emerald-500 text-[50%] text-black">✓</span>}
+      {atWar && <span className="absolute -bottom-1 -right-1 grid h-1/3 w-1/3 place-items-center rounded-full bg-red-600"><GameIcon uri={ACTION_ICONS.raid} size={size * 0.15} tile={false} /></span>}
+    </button>
+  );
+});
+
+const CitizenOrbit = memo(function CitizenOrbit({ c, sx, sy, selected, tunic, onPick, onHover, onLeave }: { c: Citizen; sx: number; sy: number; selected: boolean; tunic: string; onPick: (c: Citizen) => void; onHover: (h: HoverInfo) => void; onLeave: () => void }) {
+  return (
+    <div className="orbit" style={{ left: sx, top: sy, zIndex: 14 }}>
+      <div className="orbit-arm" style={{ animationDuration: `${c.dur}s`, animationDelay: `-${c.phase}s`, animationDirection: c.rev ? "reverse" : "normal" }}>
+        <div className="orbit-pos" style={{ transform: `translateX(${c.orbit}px)` }}>
+          <div className="orbit-up" style={{ animationDuration: `${c.dur}s`, animationDelay: `-${c.phase}s`, animationDirection: c.rev ? "normal" : "reverse" }}>
+            <button data-ui="1" onClick={() => onPick(c)} onPointerEnter={() => onHover({ x: sx, y: sy - 40, label: c.name, sub: c.occ })} onPointerLeave={onLeave} className={`villager ${selected ? "v-sel" : ""}`} title={`${c.name} · ${c.occ}`}>
+              <span className="v-bob" style={{ animationDelay: `-${(c.phase % 1).toFixed(2)}s` }}>
+                <span className="v-head" />
+                <span className="v-torso" style={{ background: tunic }} />
+                <span className="v-legL" /><span className="v-legR" />
+              </span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const BuildingMarker = memo(function BuildingMarker({ pb, icon, radius, onRemove }: { pb: PlacedBuilding; icon: string; radius: number; onRemove: (id: string) => void }) {
+  return (
+    <div data-ui="1" className="pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2" style={{ left: pb.x, top: pb.y, zIndex: 12 }}>
+      <div className="grid place-items-center rounded-xl border border-[#c8a84e]/30 bg-[#1a1611]/80 shadow-lg transition hover:scale-110 hover:border-[#c8a84e]/70" style={{ width: radius * 0.7, height: radius * 0.7 }} title={`${pb.name} (Lv ${pb.level}) — Click to remove`} onClick={(e) => { e.stopPropagation(); onRemove(pb.id); }}>
+        <GameIcon uri={icon} size={radius * 0.42} />
+      </div>
+      <span className="pointer-events-none block -translate-x-1/2 whitespace-nowrap text-center text-[9px] font-semibold text-[#c8a84e]" style={{ left: "50%", position: "relative" }}>{pb.name}</span>
+    </div>
+  );
+});
+
+const MapOverlaySvg = memo(function MapOverlaySvg({ borders, roads }: { borders: { d: string; col: string; w: number }[]; roads: { key: string; x1: number; y1: number; x2: number; y2: number; stroke: string; width: number; dash: string }[] }) {
+  return (
+    <svg className="pointer-events-none absolute inset-0" width={W} height={H}>
+      {borders.map((b, i) => <path key={i} d={b.d} stroke={b.col} strokeWidth={b.w} fill="none" strokeDasharray="14 10" />)}
+      {roads.map(r => <line key={r.key} x1={r.x1} y1={r.y1} x2={r.x2} y2={r.y2} stroke={r.stroke} strokeWidth={r.width} strokeDasharray={r.dash} />)}
+    </svg>
+  );
+});
+
+const MinimapDots = memo(function MinimapDots({ baronies, atWar, alliances }: { baronies: Barony[]; atWar: string[]; alliances: Alliance[] }) {
+  return <>{baronies.map(b => <span key={b.id} className="absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full" style={{ left: `${b.x / W * 100}%`, top: `${b.y / H * 100}%`, background: atWar.includes(b.id) ? "#e05a4a" : alliances.some(a => a.bid === b.id) ? "#57c07a" : b.color }} />)}</>;
+});
+
+const Dock = memo(function Dock({ panel, rank, onToggle, onHome }: { panel: Panel; rank: string; onToggle: (p: Panel) => void; onHome: () => void }) {
+  return (
+    <nav data-ui="1" className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-0.5 rounded-2xl border border-white/8 bg-[#0e0d0b]/90 p-1.5 shadow-[0_16px_50px_rgba(0,0,0,.55)] backdrop-blur-2xl">
+      {(rank === "King of the Realm" || rank === "Regional Lord") && <button onClick={() => onToggle("Crown")} className={`btn-press flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[12px] font-semibold transition ${panel === "Crown" ? "bg-[#c8a84e] text-[#1a1611]" : "bg-amber-900/60 text-amber-200 hover:bg-amber-800/60"}`}><GameIcon uri={DOCK_ICONS.Crown} size={14} tile={false} />Crown</button>}
+      {([["Build", "Build"], ["Training", "Training"], ["Council", "Council"], ["Trade", "Trade"], ["War", "War"], ["Faith", "Faith"], ["Factions", "Factions"], ["Resources", "Resources"], ["Chronicle", "Chronicle"]] as const).map(([id]) => (
+        <button key={id} onClick={() => onToggle(id)} className={`btn-press flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[12px] font-semibold transition ${panel === id ? "bg-[#c8a84e] text-[#1a1611]" : "hover:bg-white/8"}`}><GameIcon uri={DOCK_ICONS[id as keyof typeof DOCK_ICONS]} size={14} tile={false} />{id}</button>
+      ))}
+      <span className="mx-1 h-6 w-px bg-white/10" />
+      <button onClick={onHome} className="btn-press flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[12px] font-semibold transition hover:bg-white/8"><GameIcon uri={DOCK_ICONS.Home} size={14} tile={false} />Home</button>
+    </nav>
+  );
+});
