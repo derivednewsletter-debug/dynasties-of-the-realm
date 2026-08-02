@@ -27,7 +27,7 @@ interface Caravan { id: string; tid: string; resource: RN; amount: number; days:
 interface Alliance { bid: string; kind: "alliance" | "trade bloc" }
 interface Army { militia: number; archers: number; spearmen: number; knights: number; captains: string[]; training: number }
 
-interface Road { id: string; fromSid: string; toSid: string; level: number; traffic: number }
+interface Road { id: string; fromSid: string; toSid: string; level: number; traffic: number; decayed: boolean }
 interface Faction { id: string; name: string; goal: string; members: number; aggression: number; loyalty: number }
 interface MemoryObj { id: string; text: string; tone: string; year: number; season: Season; spreadTo: string[] }
 
@@ -318,6 +318,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
         let lineagesBorn = prev.lineagesBorn;
         const extra: ChronEntry[] = [];
         let toast = prev.toast;
+        let seasonRoads: Road[] | null = null;
         let rep = { ...prev.rep };
         const rate = seasonRate(prev);
         let res = chRes(prev.res, Object.fromEntries((Object.entries(rate) as [RN, number][]).map(([k, v]) => [k, v * step / DAYS_PER_SEASON])) as Partial<Res>);
@@ -369,6 +370,38 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
             prestige += 1;
           }
           extra.push(chron(year, season, `${season} Arrives`, season === "Winter" ? "Snow settles over the valley; stores begin to thin." : season === "Spring" ? "Thaw comes and the fields are turned." : season === "Summer" ? "Long days bring building and trade." : "Harvest and taxes fill the barns.", "hope"));
+
+          // ──── ROAD EVOLUTION (season boundary) ────
+          let roads = [...(prev.roads ?? [])];
+          if (prev.settlements.length > 1) {
+            for (const a of prev.settlements) for (const b of prev.settlements) {
+              if (a.id >= b.id) continue;
+              const dist = Math.hypot(a.x - b.x, b.y - a.y);
+              if (dist > 2500) continue;
+              const existing = roads.find(r => (r.fromSid === a.id && r.toSid === b.id) || (r.fromSid === b.id && r.toSid === a.id));
+              const traffic = Math.min(200, (a.pop + b.pop) / 20 + (existing?.traffic ?? 0) * (existing?.decayed ? 0.7 : 0.95));
+              const level = traffic > 140 ? 3 : traffic > 75 ? 2 : traffic > 3 ? 1 : 0;
+              if (level === 0) continue;
+              if (existing) {
+                existing.traffic = traffic;
+                existing.level = level;
+                existing.decayed = false;
+              } else {
+                roads.push({ id: uid("rd"), fromSid: a.id, toSid: b.id, level, traffic, decayed: false });
+              }
+            }
+          }
+          // Ghost roads: if a settlement's pop dropped hard, decay its roads
+          for (const r of roads) {
+            if (r.decayed) continue;
+            const a = prev.settlements.find(s => s.id === r.fromSid);
+            const b2 = prev.settlements.find(s => s.id === r.toSid);
+            if (a && b2 && (a.pop < 30 || b2.pop < 30)) {
+              r.decayed = true;
+              r.level = Math.max(2, r.level - 1);
+            }
+          }
+          seasonRoads = roads;
           const hungry = res.food < pop / 3;
           rep = { ...rep, trust: cl01(rep.trust + (hungry ? -4 : 1)), prosperity: cl01(rep.prosperity + (res.silver > 60 ? 2 : 0) + (hungry ? -5 : 1)), tradition: cl01(rep.tradition + (prev.buildings.some(b => b.id === "shrine") ? 1 : 0)) };
         }
@@ -384,6 +417,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
         if (Math.random() < 0.008 * step) evt = EVENTS[Math.floor(Math.random() * EVENTS.length)];
 
         const ng: GS = { ...prev, day, year, season, res, rate, pop, popCap, family, ruler, prestige, rep, caravans, baronies, evt, toast, chronicle: extra.length ? [...extra.reverse(), ...prev.chronicle].slice(0, 400) : prev.chronicle };
+        if (seasonRoads) ng.roads = seasonRoads;
         // ──── DEMOTION CHECK ────
         const rank = promoteRank(ng);
         const RANK_ORDER = ["Hamlet","Village","Town","City","Petty Barony","Small Barony","Great Barony","Regional Lord","King of the Realm"];
@@ -405,28 +439,6 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
         ng.rank = rank;
         ng.demotions = demotions;
         ng.peakRank = newRankIdx > RANK_ORDER.indexOf(prev.peakRank) ? rank : prev.peakRank;
-
-        // ──── ROAD EVOLUTION (season boundary) ────
-        let roads = [...(prev.roads ?? [])];
-        if (g.settlements.length > 1) {
-          for (const a of g.settlements) for (const b of g.settlements) {
-            if (a.id >= b.id) continue;
-            const dist = Math.hypot(a.x - b.x, b.y - a.y);
-            if (dist > 2500) continue;
-            const existing = roads.find(r => (r.fromSid === a.id && r.toSid === b.id) || (r.fromSid === b.id && r.toSid === a.id));
-            const traffic = Math.min(200, (a.pop + b.pop) / 20 + (existing?.traffic ?? 0) * 0.95);
-            const level = traffic > 140 ? 3 : traffic > 75 ? 2 : traffic > 3 ? 1 : 0;
-            if (level === 0) continue;
-            if (existing) {
-              existing.traffic = traffic;
-              existing.level = level;
-            } else {
-              roads.push({ id: uid("rd"), fromSid: a.id, toSid: b.id, level, traffic });
-            }
-          }
-        }
-        // Move road evolution into the season boundary for performance
-        ng.roads = roads;
 
         // ──── CITIZEN MEMORY SPREADING ────
         let memories = (prev.citizenMemories ?? []).map(m => ({ ...m, spreadTo: [...m.spreadTo] }));
@@ -749,9 +761,10 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
               const a = g.settlements.find(s => s.id === r.fromSid);
               const b2 = g.settlements.find(s => s.id === r.toSid);
               if (!a || !b2) return null;
-              const colors = ["", "", "rgba(180,160,120,0.25)", "rgba(180,160,120,0.45)"];
-              const widths = [0, 0, 2.5, 4.5];
-              return <line key={`rd-${r.id}`} x1={a.x} y1={a.y} x2={b2.x} y2={b2.y} stroke={colors[r.level]} strokeWidth={widths[r.level]} strokeDasharray={r.level === 3 ? "none" : "10 8"} />;
+              const isGhost = r.decayed;
+              const colors = ["", "", isGhost ? "rgba(140,120,100,0.15)" : "rgba(180,160,120,0.25)", isGhost ? "rgba(140,120,100,0.25)" : "rgba(180,160,120,0.45)"];
+              const widths = [0, 0, isGhost ? 1.5 : 2.5, isGhost ? 2.5 : 4.5];
+              return <line key={`rd-${r.id}`} x1={a.x} y1={a.y} x2={b2.x} y2={b2.y} stroke={colors[r.level]} strokeWidth={widths[r.level]} strokeDasharray={isGhost ? "6 14" : r.level === 3 ? "none" : "10 8"} />;
             })}
           </svg>
 
