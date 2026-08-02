@@ -30,6 +30,7 @@ interface Vassal { bid: string; title: string; loyalty: number; tribute: number 
 interface SuccessionCrisis { id: string; claimants: { name: string; age: number; support: number; traits: string[] }[]; resolved: boolean; year: number }
 interface Army { militia: number; archers: number; spearmen: number; knights: number; royalGuard: number; captains: string[]; training: number }
 
+interface PlacedBuilding { id: string; buildId: string; name: string; sid: string; x: number; y: number; level: number }
 interface Road { id: string; fromSid: string; toSid: string; level: number; traffic: number; decayed: boolean }
 interface Faction { id: string; name: string; goal: string; members: number; aggression: number; loyalty: number }
 interface MemoryObj { id: string; text: string; tone: string; year: number; season: Season; spreadTo: string[] }
@@ -63,6 +64,7 @@ interface GS {
   vassals: Vassal[]; successionCrisis: SuccessionCrisis | null;
   civilWarActive: boolean;
   factionRep: FactionReputation[];
+  placedBuildings: PlacedBuilding[];
 }
 
 /* ───────── world constants ───────── */
@@ -286,6 +288,11 @@ function initGame(cd?: CharData): GS {
     roads: [], factions: [], citizenMemories: [], demotions: 0, battlesFought: 0, lineagesBorn: 0, peakRank: "Hamlet", dynastyExtinct: false,
     vassals: [], successionCrisis: null, civilWarActive: false,
     factionRep: baronies.filter(b => b.id !== home.bid).map(b => ({ bid: b.id, trust: 0, grudge: 0, fear: 0, respect: 0, actions: [], genGrudges: [] })),
+    placedBuildings: [
+      { id: uid("pb"), buildId: "homes", name: "Timber Homes", sid: home.id, x: home.x - 80, y: home.y - 30, level: 1 },
+      { id: uid("pb"), buildId: "lumber", name: "Logging Camp", sid: home.id, x: home.x + 90, y: home.y - 50, level: 1 },
+      { id: uid("pb"), buildId: "shrine", name: "Old Faith Shrine", sid: home.id, x: home.x + 30, y: home.y + 70, level: 1 },
+    ],
   };
 }
 
@@ -351,6 +358,11 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   const [cTab, setCTab] = useState<"Info" | "Skills" | "Memories">("Info");
   const [confirmReset, setConfirmReset] = useState(false);
   const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "synced" | "error">("idle");
+  const [buildMode, setBuildMode] = useState(false);
+  const [placeBuildId, setPlaceBuildId] = useState<string | null>(null);
+  const ghostRef = useRef<{ x: number; y: number } | null>(null);
+  const ghostTickRef = useRef(0);
+  const [ghostRender, setGhostRender] = useState(0);
 
   // Auth
   const auth = useAuth();
@@ -783,6 +795,10 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   /* ── actions ── */
   const resolveEvt = (o: EvtOpt) => { setConfirmReset(false); setG(p => { if (!p.evt) return p; const rep = { ...p.rep }; for (const [k, v] of Object.entries(o.rep ?? {}) as [keyof Rep, number][]) rep[k] = cl01(rep[k] + v); return { ...p, res: chRes(p.res, o.res ?? {}), rep, prestige: p.prestige + (o.pres ?? 0), evt: null, chronicle: [chron(p.year, p.season, p.evt.title, o.result, "warning"), ...p.chronicle] }; }); };
 
+/* module-level build constants */
+const BUILD_ICONS: Record<string, string> = { homes: "🏠", lumber: "🪓", farm: "🌾", mill: "⚙", mine: "⛏", smith: "🔨", market: "🏪", shrine: "🪦", watch: "🗼" };
+const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm: 90, mill: 75, mine: 85, smith: 65, market: 80, shrine: 60, watch: 70 };
+
   const build = (t: Building) => { setConfirmReset(false); setG(p => {
     const ex = p.buildings.find(b => b.id === t.id);
     const sc = Object.fromEntries(Object.entries(t.cost).map(([k, v]) => [k, Math.ceil((v ?? 0) * (ex ? ex.level + 1 : 1))])) as Partial<Res>;
@@ -790,6 +806,38 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
     setNotice(`${t.name} ${ex ? "upgraded" : "built"}.`);
     return { ...p, buildings: ex ? p.buildings.map(b => b.id === t.id ? { ...b, level: b.level + 1 } : b) : [...p.buildings, { ...t, level: 1 }], res: chRes(p.res, Object.fromEntries(Object.entries(sc).map(([k, v]) => [k, -(v ?? 0)])) as Partial<Res>), prestige: p.prestige + (ex ? 2 : 3), rep: { ...p.rep, prosperity: cl01(p.rep.prosperity + 3) }, chronicle: [chron(p.year, p.season, `${t.name} ${ex ? "Improved" : "Founded"}`, t.desc, "glory"), ...p.chronicle] };
   }); };
+
+  const placeBuilding = (wx: number, wy: number) => {
+    if (!placeBuildId) return;
+    const bt = BUILDS.find(b => b.id === placeBuildId);
+    if (!bt) return;
+    setG(p => {
+      const sid = p.selSid;
+      const sett = p.settlements.find(s => s.id === sid);
+      if (!sett) { setNotice("Select a settlement first."); return p; }
+      const dist = Math.hypot(wx - sett.x, wy - sett.y);
+      const maxDist = sArt(sett.type, sett.home) * 0.6;
+      if (dist > maxDist) { setNotice(`Too far from ${sett.name}. Place within the settlement bounds.`); return p; }
+      const radius = BUILD_PLACE_RADIUS[bt.id] ?? 70;
+      const occupied = p.placedBuildings.filter(pb => pb.sid === sid);
+      for (const pb of occupied) {
+        if (Math.hypot(pb.x - wx, pb.y - wy) < (BUILD_PLACE_RADIUS[pb.buildId] ?? 70) + radius - 20) {
+          setNotice("Too close to another building."); return p;
+        }
+      }
+      const ex = p.buildings.find(b => b.id === bt.id);
+      const sc = Object.fromEntries(Object.entries(bt.cost).map(([k, v]) => [k, Math.ceil((v ?? 0) * (ex ? ex.level + 1 : 1))])) as Partial<Res>;
+      if (!afford(p.res, sc)) { setNotice(`Need ${fmtD(sc)}`); return p; }
+      const pb: PlacedBuilding = { id: uid("pb"), buildId: bt.id, name: bt.name, sid, x: Math.round(wx), y: Math.round(wy), level: 1 };
+      setNotice(`${bt.name} placed near ${sett.name}.`);
+      return { ...p, placedBuildings: [...p.placedBuildings, pb], buildings: ex ? p.buildings.map(b => b.id === bt.id ? { ...b, level: b.level + 1 } : b) : [...p.buildings, { ...bt, level: 1 }], res: chRes(p.res, Object.fromEntries(Object.entries(sc).map(([k, v]) => [k, -(v ?? 0)])) as Partial<Res>), prestige: p.prestige + 3, rep: { ...p.rep, prosperity: cl01(p.rep.prosperity + 3) }, chronicle: [chron(p.year, p.season, `${bt.name} Placed`, `A new ${bt.name.toLowerCase()} was built near ${sett.name}.`, "glory"), ...p.chronicle] };
+    });
+  };
+
+  const removeBuilding = (pbId: string) => {
+    setG(p => { const removed = p.placedBuildings.find(pb => pb.id === pbId); if (!removed) return p; const bExists = p.placedBuildings.filter(pb => pb.buildId === removed.buildId && pb.id !== pbId).length > 0; return { ...p, placedBuildings: p.placedBuildings.filter(pb => pb.id !== pbId), buildings: bExists ? p.buildings : p.buildings.filter(b => b.id !== removed.buildId) }; });
+    setNotice("Building removed.");
+  };
 
   const trainAct = () => { setConfirmReset(false); setG(p => { if (p.army.training >= 100) { setNotice("Training already at maximum."); return p; } if (!afford(p.res, { food: 10, weapons: 2, silver: 12 })) { setNotice("Need food, weapons and silver."); return p; } setNotice("The militia drilled in the yard."); return { ...p, res: chRes(p.res, { food: -10, weapons: -2, silver: -12 }), prestige: p.prestige + 2, army: { ...p.army, training: cl01(p.army.training + 4) }, rep: { ...p.rep, respect: cl01(p.rep.respect + 4), fear: cl01(p.rep.fear + 3) }, chronicle: [chron(p.year, p.season, "Militia Muster", "Hearthmere drilled under ash poles.", "glory"), ...p.chronicle] }; }); };
 
@@ -918,7 +966,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
       if ((t.tagName === "INPUT" || t.closest("[data-ui]")) && e.key !== "Escape") return;
       const cz = camRef.current.z;
       if (e.key === " ") { e.preventDefault(); setSpeed(s => s === 0 ? 1 : 0); }
-      if (e.key === "Escape") { setPanel(null); setConfirmReset(false); }
+      if (e.key === "Escape") { setPanel(null); setConfirmReset(false); setBuildMode(false); setPlaceBuildId(null); ghostRef.current = null; }
       if (e.key === "ArrowLeft" || e.key === "a") setCam(c => ({ ...c, x: cl(c.x - 120 / cz, 0, Math.max(0, W - vp.w / cz)) }));
       if (e.key === "ArrowRight" || e.key === "d") setCam(c => ({ ...c, x: cl(c.x + 120 / cz, 0, Math.max(0, W - vp.w / cz)) }));
       if (e.key === "ArrowUp" || e.key === "w") setCam(c => ({ ...c, y: cl(c.y - 120 / cz, 0, Math.max(0, H - vp.h / cz)) }));
@@ -932,8 +980,8 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
 
   /* ── map input ── */
   const onDown = (e: React.PointerEvent) => { if ((e.target as HTMLElement).closest("[data-ui]")) return; drag.current = { on: true, sx: e.clientX, sy: e.clientY, cx: cam.x, cy: cam.y, moved: false }; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); };
-  const onMove = (e: React.PointerEvent) => { if (!drag.current.on) return; const dx = e.clientX - drag.current.sx, dy = e.clientY - drag.current.sy; if (Math.hypot(dx, dy) > 4) drag.current.moved = true; setCam(c => ({ ...c, x: cl(drag.current.cx - dx / c.z, 0, Math.max(0, W - vp.w / c.z)), y: cl(drag.current.cy - dy / c.z, 0, Math.max(0, H - vp.h / c.z)) })); };
-  const onUp = () => { drag.current.on = false; };
+  const onMove = (e: React.PointerEvent) => { if (buildMode && placeBuildId) { const r = mapRef.current?.getBoundingClientRect(); if (r) { const wx = cam.x + (e.clientX - r.left) / cam.z; const wy = cam.y + (e.clientY - r.top) / cam.z; ghostRef.current = { x: wx, y: wy }; const now = performance.now(); if (now - ghostTickRef.current > 16) { ghostTickRef.current = now; setGhostRender(n => n + 1); } } } if (!drag.current.on) return; const dx = e.clientX - drag.current.sx, dy = e.clientY - drag.current.sy; if (Math.hypot(dx, dy) > 4) drag.current.moved = true; setCam(c => ({ ...c, x: cl(drag.current.cx - dx / c.z, 0, Math.max(0, W - vp.w / c.z)), y: cl(drag.current.cy - dy / c.z, 0, Math.max(0, H - vp.h / c.z)) })); };
+  const onUp = (e: React.PointerEvent) => { const wasMoved = drag.current.moved; drag.current.on = false; if (buildMode && placeBuildId && !wasMoved && !(e.target as HTMLElement).closest("[data-ui]")) { const r = mapRef.current?.getBoundingClientRect(); if (r) { const wx = cam.x + (e.clientX - r.left) / cam.z; const wy = cam.y + (e.clientY - r.top) / cam.z; placeBuilding(wx, wy); } } };
   const onWheel = (e: React.WheelEvent) => { e.preventDefault(); e.stopPropagation(); const r = mapRef.current?.getBoundingClientRect(); if (!r) return; const mx = e.clientX - r.left, my = e.clientY - r.top; setCam(c => { const wx = c.x + mx / c.z, wy = c.y + my / c.z; const nz = cl(c.z * (e.deltaY > 0 ? 0.96 : 1.04), 0.08, 3.2); return { z: nz, x: cl(wx - mx / nz, 0, Math.max(0, W - vp.w / nz)), y: cl(wy - my / nz, 0, Math.max(0, H - vp.h / nz)) }; }); };
 
   const toggle = (p: Panel) => { setConfirmReset(false); setPanel(cur => cur === p ? null : p); };
@@ -1117,6 +1165,47 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
             );
           })}
 
+          {/* placed buildings */}
+          {g.placedBuildings.filter(pb => visible(pb.x, pb.y, 200)).map(pb => {
+            const icon = BUILD_ICONS[pb.buildId] ?? "🏗";
+            const radius = BUILD_PLACE_RADIUS[pb.buildId] ?? 70;
+            return (
+              <div key={pb.id} data-ui="1" className="pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2" style={{ left: pb.x, top: pb.y, zIndex: 12 }}>
+                <div className="grid place-items-center rounded-xl border border-[#c8a84e]/30 bg-[#1a1611]/80 shadow-lg transition hover:scale-110 hover:border-[#c8a84e]/70" style={{ width: radius * 0.7, height: radius * 0.7, fontSize: radius * 0.32 }} title={`${pb.name} (Lv ${pb.level}) — Click to remove`} onClick={(e) => { e.stopPropagation(); removeBuilding(pb.id); }}>
+                  {icon}
+                </div>
+                <span className="pointer-events-none block -translate-x-1/2 whitespace-nowrap text-center text-[9px] font-semibold text-[#c8a84e]" style={{ left: "50%", position: "relative" }}>{pb.name}</span>
+              </div>
+            );
+          })}
+
+          {/* ghost placement preview */}
+          {buildMode && placeBuildId && ghostRef.current && (() => {
+            const gp = ghostRef.current!;
+            const bt = BUILDS.find(b => b.id === placeBuildId);
+            if (!bt) return null;
+            const icon = BUILD_ICONS[bt.id] ?? "🏗";
+            const radius = BUILD_PLACE_RADIUS[bt.id] ?? 70;
+            const sett = g.settlements.find(s => s.id === g.selSid);
+            const dist = sett ? Math.hypot(gp.x - sett.x, gp.y - sett.y) : 9999;
+            const maxDist = sett ? sArt(sett.type, sett.home) * 0.6 : 0;
+            const inRange = dist <= maxDist;
+            const occupied = g.placedBuildings.filter(pb => pb.sid === g.selSid);
+            let overlap = false;
+            for (const pb of occupied) {
+              if (Math.hypot(pb.x - gp.x, pb.y - gp.y) < (BUILD_PLACE_RADIUS[pb.buildId] ?? 70) + radius - 20) { overlap = true; break; }
+            }
+            const valid = inRange && !overlap;
+            return (
+              <div className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2" style={{ left: gp.x, top: gp.y, zIndex: 25 }}>
+                <div className="grid place-items-center rounded-xl border-2 border-dashed transition-all duration-75" style={{ width: radius * 0.7, height: radius * 0.7, fontSize: radius * 0.32, borderColor: valid ? "rgba(74,222,128,0.7)" : "rgba(239,68,68,0.7)", background: valid ? "rgba(74,222,128,0.1)" : "rgba(239,68,68,0.1)" }}>
+                  {icon}
+                </div>
+                <span className="block -translate-x-1/2 whitespace-nowrap text-center text-[9px] font-semibold" style={{ left: "50%", position: "relative", color: valid ? "#4ade80" : "#ef4444" }}>{valid ? bt.name : overlap ? "Blocked" : "Out of range"}</span>
+              </div>
+            );
+          })()}
+
           {/* hover tooltip */}
           {hover && (
             <div className="pointer-events-none absolute -translate-x-1/2 rounded-xl bg-black/85 px-3 py-1.5 shadow-2xl ring-1 ring-[#c8a84e]/30" style={{ left: hover.x, top: hover.y + 30, zIndex: 30 }}>
@@ -1241,7 +1330,15 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           {panel === "Family" && <div className="flex gap-3 overflow-x-auto pb-2">{g.family.map((m, i) => <div key={m.id} className={`w-32 shrink-0 rounded-2xl border p-3 text-center ${m.status === "Dead" ? "border-white/5 opacity-50" : "border-white/8 bg-white/3"}`}><img src={portrait(m, i)} alt={m.name} className="mx-auto h-16 w-14 rounded-lg object-cover" onError={(e) => { (e.target as HTMLImageElement).src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='64'%3E%3Crect fill='%233a2a1a' width='56' height='64' rx='8'/%3E%3Ctext x='28' y='42' text-anchor='middle' fill='%23c8a84e' font-size='24' font-family='sans-serif'%3E${encodeURIComponent(m.name.split(" ")[0][0])}%3C/text%3E%3C/svg%3E`; }} /><p className="mt-1 text-[12px] font-semibold">{m.name}</p><p className="text-[10px] text-[#bbb5a0]">{m.role}</p><p className="text-[10px] text-[#c8a84e]">{m.status === "Dead" ? "Deceased" : `Age ${m.age}`}</p></div>)}<div className="flex w-32 shrink-0 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 text-[11px] text-[#8d8674]"><span className="text-xl">?</span>continues…</div></div>}
           {panel === "Citizens" && <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{g.citizens.filter(c => c.sid === home.id).map(c => { const st = OCC_STYLE[c.occ]; return <button key={c.id} onClick={() => { pickC(c); center(home.x, home.y, 1.3); }} className="flex items-center gap-2 rounded-xl bg-white/3 px-3 py-2 text-left transition hover:bg-white/7"><span className="grid h-7 w-7 place-items-center rounded-full text-[11px]" style={{ background: st?.tunic }}>{st?.tool}</span><span><span className="block text-[12px] font-medium">{c.name}</span><span className="text-[10px] text-[#bbb5a0]">{c.occ} · {c.age}</span></span></button>; })}</div>}
           {panel === "Alerts" && <div className="grid gap-6 md:grid-cols-2"><div><h3 className="mb-2 text-[11px] uppercase tracking-wider text-[#c8a84e]">Alerts</h3><ul className="space-y-1 text-[12px]">{alerts.map(a => <li key={a} className="rounded-xl bg-white/3 px-3 py-2">• {a}</li>)}</ul></div><div><h3 className="mb-2 text-[11px] uppercase tracking-wider text-[#c8a84e]">Recent</h3><ul className="space-y-1 text-[12px]">{g.chronicle.slice(0, 7).map(e => <li key={e.id} className="rounded-xl bg-white/3 px-3 py-2"><strong className="text-[#c8a84e]">{e.title}</strong> <span className="text-[#bbb5a0]">{e.text}</span></li>)}</ul></div></div>}
-          {panel === "Build" && <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">{BUILDS.map(t => { const ex = g.buildings.find(b => b.id === t.id); const lv = ex?.level ?? 0; const nxt = lv + 1; const sc = Object.fromEntries(Object.entries(t.cost).map(([k, v]) => [k, Math.ceil((v ?? 0) * nxt)])) as Partial<Res>; const aff = afford(g.res, sc); return <button key={t.id} onClick={() => build(t)} className={`rounded-2xl border p-3 text-left transition ${aff ? "border-white/6 bg-white/3 hover:bg-white/7" : "border-red-400/15 bg-red-950/10 opacity-60"}`}><div className="flex justify-between"><span className="text-[13px] font-semibold">{t.name}</span><span className="rounded-full bg-[#c8a84e]/20 px-2 text-[10px] text-[#c8a84e]">Lv {lv}</span></div><p className="mt-1 text-[11px] text-[#bbb5a0]">{t.desc}</p><p className="mt-1 text-[10px] text-emerald-400">Lv {nxt}: {fmtD(t.prod)}</p><p className={`mt-1 text-[10px] ${aff ? "text-[#c8a84e]" : "text-red-400"}`}>Cost: {fmtD(sc)}</p></button>; })}</div>}
+          {panel === "Build" && <div>
+            <div className="mb-3 flex items-center gap-2">
+              <button onClick={() => { setBuildMode(!buildMode); setPlaceBuildId(null); ghostRef.current = null; }} className={`rounded-xl px-4 py-2 text-[12px] font-semibold transition ${buildMode ? "bg-[#c8a84e] text-[#1a1611]" : "bg-white/6 text-[#eee4d0] hover:bg-white/12"}`}>🗺 {buildMode ? "Exit Map Mode" : "Place on Map"}</button>
+              {buildMode && <span className="text-[11px] text-[#8d8674]">Select a building below, then click the map near your settlement to place it.</span>}
+            </div>
+            {buildMode && placeBuildId && <div className="mb-3 flex items-center gap-2"><span className="text-[11px] text-[#c8a84e]">Placing: <strong>{BUILDS.find(b => b.id === placeBuildId)?.name}</strong></span><button onClick={() => { setPlaceBuildId(null); ghostRef.current = null; }} className="rounded-lg bg-white/6 px-2 py-1 text-[10px] hover:bg-white/12">Cancel</button></div>}
+            <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">{BUILDS.map(t => { const ex = g.buildings.find(b => b.id === t.id); const lv = ex?.level ?? 0; const nxt = lv + 1; const sc = Object.fromEntries(Object.entries(t.cost).map(([k, v]) => [k, Math.ceil((v ?? 0) * nxt)])) as Partial<Res>; const aff = afford(g.res, sc); const isSelected = buildMode && placeBuildId === t.id; return <button key={t.id} onClick={() => { if (buildMode) { setPlaceBuildId(t.id); ghostRef.current = null; } else { build(t); } }} className={`rounded-2xl border p-3 text-left transition ${isSelected ? "border-[#c8a84e] bg-[#c8a84e]/15 ring-1 ring-[#c8a84e]/40" : aff ? "border-white/6 bg-white/3 hover:bg-white/7" : "border-red-400/15 bg-red-950/10 opacity-60"}`}><div className="flex justify-between"><span className="text-[13px] font-semibold">{BUILD_ICONS[t.id] ?? "🏗"} {t.name}</span><span className="rounded-full bg-[#c8a84e]/20 px-2 text-[10px] text-[#c8a84e]">Lv {lv}</span></div><p className="mt-1 text-[11px] text-[#bbb5a0]">{t.desc}</p><p className="mt-1 text-[10px] text-emerald-400">Lv {nxt}: {fmtD(t.prod)}</p><p className={`mt-1 text-[10px] ${aff ? "text-[#c8a84e]" : "text-red-400"}`}>Cost: {fmtD(sc)}</p>{buildMode && <p className="mt-1 text-[9px] text-[#8d8674]">Click to select → place on map</p>}</button>; })}</div>
+            {!buildMode && g.placedBuildings.filter(pb => pb.sid === g.selSid).length > 0 && <div className="mt-4 border-t border-white/8 pt-3"><p className="mb-2 text-[11px] uppercase tracking-wider text-[#8d8674]">Placed Buildings ({g.placedBuildings.filter(pb => pb.sid === g.selSid).length})</p><div className="flex flex-wrap gap-2">{g.placedBuildings.filter(pb => pb.sid === g.selSid).map(pb => <div key={pb.id} className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-[11px]"><span>{BUILD_ICONS[pb.buildId] ?? "🏗"}</span><span className="font-medium">{pb.name}</span><span className="text-[10px] text-[#8d8674]">Lv {pb.level}</span><button onClick={() => removeBuilding(pb.id)} className="ml-1 rounded-full bg-red-900/50 px-1.5 py-0.5 text-[9px] text-red-200 hover:bg-red-800/50">✕</button></div>)}</div></div>}
+          </div>}
           {panel === "Training" && <div className="grid gap-3 md:grid-cols-3"><AC t="Muster Militia" b="Drill defenders with food, weapons and silver." bt="Train" fn={trainAct} /><AC t="Tactical Doctrine" b={`Doctrine favours ${g.ruler.path}.`} bt="Study" fn={trainAct} /><AC t="Border Watch" b="Post rangers to track rival movements." bt="Post" fn={trainAct} /></div>}
           {panel === "Council" && <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4"><AC t="Merciful Judgment" b="Raise trust, reduce fear." bt="Judge" fn={() => council("mercy")} /><AC t="Open Trade" b="Invite merchants and foreign coin." bt="Invite" fn={() => council("trade")} /><AC t="Honour Old Faith" b="Strengthen tradition." bt="Gather" fn={() => council("tradition")} /><AC t="Send Envoys" b="Improve relations broadly." bt="Dispatch" fn={() => council("envoys")} /></div>}
           {panel === "Resources" && <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7">{(Object.entries(g.res) as [RN, number][]).map(([k, v]) => { const liveRate = seasonRateMemo[k] ?? 0; return <div key={k} title={`${liveRate >= 0 ? "+" : ""}${liveRate.toFixed(1)} per season. ${RICONS[k]} ${k} is used for buildings, trade, and survival.`} className="rounded-2xl bg-white/3 p-3"><p className="text-[10px] uppercase tracking-wide text-[#8d8674]">{RICONS[k]} {k}</p><p className="text-xl font-bold tabular-nums">{Math.floor(v)}</p><p className={`text-[10px] tabular-nums ${liveRate >= 0 ? "text-emerald-400" : "text-red-400"}`}>{liveRate >= 0 ? "+" : ""}{liveRate.toFixed(1)}/season</p></div>; })}</div>}
@@ -1249,7 +1346,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           {panel === "Realm" && <RealmPanel g={g} search={rSearch} setSearch={setRSearch} pickB={pickB} center={center} />}
           {panel === "Trade" && <TradePanel g={g} selB={selB} send={sendCaravan} dip={dipAction} />}
           {panel === "War" && <WarPanel g={g} selB={selB} recruit={recruit} recruitRoyalGuard={recruitRoyalGuard} assignCpt={assignCpt} raid={raid} start={startBattle} dip={dipAction} />}
-          {panel === "Settlement" && <SettPanel s={selS} b={selB} g={g} center={center} setPanel={setPanel} />}
+          {panel === "Settlement" && <SettPanel s={selS} b={selB} g={g} center={center} setPanel={setPanel} enterBuildMode={() => { setBuildMode(true); setPanel("Build"); center(selS.x, selS.y, 1.4); }} />}
           {panel === "Barony" && <BarPanel b={selB} g={g} center={center} pickS={pickS} setPanel={setPanel} />}
           {panel === "Villager" && selC && <VillPanel c={selC} g={g} center={center} tab={cTab} setTab={setCTab} />}
           {panel === "Crown" && <CrownPanel g={g} grantTitle={grantTitle} resolveCrisis={resolveCrownCrisis} recruitRoyalGuard={recruitRoyalGuard} />}
@@ -1414,7 +1511,7 @@ function WarPanel({ g, selB, recruit, recruitRoyalGuard, assignCpt, raid, start,
   );
 }
 
-function SettPanel({ s, b, g, center, setPanel }: { s: Settlement; b: Barony; g: GS; center: (x: number, y: number, z?: number) => void; setPanel: (p: Panel) => void }) {
+function SettPanel({ s, b, g, center, setPanel, enterBuildMode }: { s: Settlement; b: Barony; g: GS; center: (x: number, y: number, z?: number) => void; setPanel: (p: Panel) => void; enterBuildMode?: () => void }) {
   return (
     <div className="grid gap-4 md:grid-cols-[1fr_1fr]">
       <div>
@@ -1425,7 +1522,7 @@ function SettPanel({ s, b, g, center, setPanel }: { s: Settlement; b: Barony; g:
         <p className="text-[12px]">Ruled by <strong>{b.house}</strong> · relations {b.rel}</p>
         <div className="mt-3 flex flex-wrap gap-1.5">
           <button onClick={() => center(s.x, s.y, 1.5)} className="rounded-lg bg-[#c8a84e] px-3 py-1.5 text-[11px] font-semibold text-[#1a1611]">Zoom in</button>
-          {s.home ? <button onClick={() => setPanel("Build")} className="rounded-lg bg-white/6 px-3 py-1.5 text-[11px] font-semibold hover:bg-white/12">Manage</button> : <>
+          {s.home ? <><button onClick={() => setPanel("Build")} className="rounded-lg bg-white/6 px-3 py-1.5 text-[11px] font-semibold hover:bg-white/12">Manage</button><button onClick={enterBuildMode} className="rounded-lg bg-[#c8a84e]/20 px-3 py-1.5 text-[11px] font-semibold text-[#c8a84e] ring-1 ring-[#c8a84e]/30 hover:bg-[#c8a84e]/30">🗺 Place Buildings</button></> : <>
             <button onClick={() => setPanel("Trade")} className="rounded-lg bg-white/6 px-3 py-1.5 text-[11px] font-semibold hover:bg-white/12">Trade</button>
             <button onClick={() => setPanel("War")} className="rounded-lg bg-red-900/50 px-3 py-1.5 text-[11px] font-semibold text-red-200 hover:bg-red-800/50">War</button>
             <button onClick={() => setPanel("Barony")} className="rounded-lg bg-white/6 px-3 py-1.5 text-[11px] font-semibold hover:bg-white/12">Barony</button>
