@@ -13,6 +13,15 @@ export const REGIONS: Record<RegionChoice, { color: string; difficulty: string; 
   "River Kingdom":    { color: "#5a8a6a", difficulty: "Medium", main: "Fertile Lands",   desc: "River waters make the soil rich and dark.", x: 2500, y: 7200 },
 };
 
+export const PATHS: { id: string; icon: string; label: string; desc: string }[] = [
+  { id: "Forest & Beast", icon: "🌲", label: "Forest & Beast", desc: "Master of woodcraft, hunting, and the wild." },
+  { id: "Iron",          icon: "⚒",  label: "Iron",           desc: "Forge and anvil — industry is your strength." },
+  { id: "Scholar",       icon: "📜", label: "Scholar",        desc: "Knowledge, diplomacy, and the written word." },
+  { id: "Warrior",       icon: "⚔",  label: "Warrior",        desc: "Born for battle — lead from the front." },
+  { id: "Sea",           icon: "⛵", label: "Sea",            desc: "Trade winds and tides shape your fortune." },
+  { id: "Land",          icon: "🌾", label: "Land",           desc: "Steward of field and flock — the soil provides." },
+];
+
 export const BANNERS: Record<BannerChoice, { icon: string; label: string }> = {
   Lion:  { icon: "🦁", label: "The Lion — ferocity and pride" },
   Eagle: { icon: "🦅", label: "The Eagle — vision and freedom" },
@@ -28,12 +37,14 @@ interface Props {
     firstName: string;
     houseName: string;
     banner: BannerChoice;
+    path: string;
   }) => void;
   onContinue: () => void;
   hasSave: boolean;
+  isAuthed: boolean;
 }
 
-export function MainMenu({ onCreate, onContinue, hasSave }: Props) {
+export function MainMenu({ onCreate, onContinue, hasSave, isAuthed }: Props) {
   const [screen, setScreen] = useState<"menu" | "create" | "settings" | "credits">("menu");
 
   // Creation state
@@ -42,8 +53,10 @@ export function MainMenu({ onCreate, onContinue, hasSave }: Props) {
   const [firstName, setFirstName] = useState("Landon");
   const [houseName, setHouseName] = useState("Sheatsley");
   const [banner, setBanner] = useState<BannerChoice>("Wolf");
+  const [path, setPath] = useState("Forest & Beast");
 
   const [step, setStep] = useState(1);
+  const TOTAL_STEPS = 5;
 
   if (screen === "menu") return (
     <div className="relative flex h-screen w-screen flex-col items-center justify-center overflow-hidden bg-[#080706]">
@@ -68,8 +81,11 @@ export function MainMenu({ onCreate, onContinue, hasSave }: Props) {
           <button onClick={onContinue} disabled={!hasSave}
             className={`rounded-2xl border px-12 py-4 text-[15px] font-semibold transition ${
               hasSave ? "border-[#c8a84e]/30 text-[#c8a84e] hover:bg-[#c8a84e]/10" : "border-white/5 text-white/20 cursor-not-allowed"}`}>
-            Continue
+            {isAuthed ? "Load Your World" : "Continue"}
           </button>
+          {isAuthed && (
+            <p className="mt-2 text-center text-[10px] text-[#8d8674]/60">Signed in · one world per account</p>
+          )}
           <div className="mt-4 flex justify-center gap-6">
             <button onClick={() => setScreen("settings")} className="text-[11px] text-[#8d8674] hover:text-[#c8a84e] transition">Settings</button>
             <button onClick={() => setScreen("credits")} className="text-[11px] text-[#8d8674] hover:text-[#c8a84e] transition">Credits</button>
@@ -104,7 +120,7 @@ export function MainMenu({ onCreate, onContinue, hasSave }: Props) {
     <div className="flex h-screen w-screen flex-col bg-[#080706]">
       {/* Progress bar */}
       <div className="flex items-center gap-2 px-8 pt-6">
-        {[1, 2, 3, 4].map(s => (
+        {Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1).map(s => (
           <div key={s} className={`h-1 flex-1 rounded-full transition ${s <= step ? "bg-[#c8a84e]" : "bg-white/8"}`} />
         ))}
       </div>
@@ -163,8 +179,28 @@ export function MainMenu({ onCreate, onContinue, hasSave }: Props) {
             </div>
           )}
 
-          {/* Step 3: Banner */}
+          {/* Step 3: Path */}
           {step === 3 && (
+            <div className="mx-auto max-w-xl space-y-6">
+              <h2 className="text-center text-2xl font-bold text-[#eee4d0]">Choose Your Path</h2>
+              <p className="text-center text-[12px] text-[#8d8674]">Your path shapes your starting skills, your people, and your legacy.</p>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {PATHS.map(p => (
+                  <button key={p.id} onClick={() => setPath(p.id)}
+                    className={`rounded-2xl border p-4 text-left transition ${
+                      path === p.id ? "border-[#c8a84e] bg-[#c8a84e]/10" : "border-white/8 bg-white/3 hover:bg-white/5"
+                    }`}>
+                    <span className="text-3xl">{p.icon}</span>
+                    <p className="mt-2 text-[13px] font-bold">{p.label}</p>
+                    <p className="mt-0.5 text-[11px] text-[#bbb5a0]">{p.desc}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Step 4: Banner */}
+          {step === 4 && (
             <div className="mx-auto max-w-md space-y-6">
               <h2 className="text-center text-2xl font-bold text-[#eee4d0]">Choose Your Banner</h2>
               <p className="text-center text-[12px] text-[#8d8674]">Your sigil flies over every field, fort, and throne.</p>
@@ -185,8 +221,8 @@ export function MainMenu({ onCreate, onContinue, hasSave }: Props) {
             </div>
           )}
 
-          {/* Step 4: Confirm */}
-          {step === 4 && (
+          {/* Step 5: Confirm */}
+          {step === 5 && (
             <div className="mx-auto max-w-md space-y-6 text-center">
               <h2 className="text-2xl font-bold text-[#eee4d0]">The Chronicle Awaits</h2>
               <div className="rounded-2xl border border-[#c8a84e]/20 bg-[#0e0d0b] p-6 text-left space-y-2">
@@ -194,7 +230,7 @@ export function MainMenu({ onCreate, onContinue, hasSave }: Props) {
                 <p className="text-[13px] text-[#bbb5a0]">
                   <strong className="text-[#eee4d0]">{gender === "male" ? "Chief" : "Chieftess"} {firstName} {houseName}</strong> of {region}
                 </p>
-                <p className="text-[12px] text-[#8d8674]">Banner: {BANNERS[banner].icon} {banner} · Difficulty: {REGIONS[region].difficulty}</p>
+                <p className="text-[12px] text-[#8d8674]">Path: {path} · Banner: {BANNERS[banner].icon} {banner} · Difficulty: {REGIONS[region].difficulty}</p>
                 <p className="text-[11px] text-[#8d8674] italic">A small hamlet clings to the land, waiting for its first page.</p>
               </div>
               <p className="text-[11px] text-[#8d8674]">Every dynasty begins with a single name.</p>
@@ -206,10 +242,10 @@ export function MainMenu({ onCreate, onContinue, hasSave }: Props) {
             {step > 1 && (
               <button onClick={() => setStep(s => s - 1)} className="rounded-xl bg-white/6 px-6 py-2.5 text-[12px] font-semibold hover:bg-white/10">← Back</button>
             )}
-            {step < 4 ? (
+            {step < TOTAL_STEPS ? (
               <button onClick={() => setStep(s => s + 1)} className="rounded-xl bg-[#c8a84e] px-8 py-2.5 text-[12px] font-bold text-[#1a1611] hover:brightness-110">Next →</button>
             ) : (
-              <button onClick={() => onCreate({ region, gender, firstName, houseName, banner })}
+              <button onClick={() => onCreate({ region, gender, firstName, houseName, banner, path })}
                 className="rounded-xl bg-[#c8a84e] px-10 py-3 text-[14px] font-bold text-[#1a1611] shadow-lg shadow-[#c8a84e]/20 hover:brightness-110 transition">
                 Begin the Chronicle
               </button>

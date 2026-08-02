@@ -220,7 +220,7 @@ function genCitizens(settlements: Settlement[]): Citizen[] {
   return out;
 }
 
-type CharData = { region: RegionChoice; gender: GenderChoice; firstName: string; houseName: string; banner: BannerChoice };
+type CharData = { region: RegionChoice; gender: GenderChoice; firstName: string; houseName: string; banner: BannerChoice; path: string };
 
 const REGION_RES: Record<RegionChoice, Partial<Res> & { motto: string; difficulty: number }> = {
   "Forest Valley":     { food: 60, wood: 110, stone: 14, iron: 4, fish: 6, wool: 8, herbs: 28, leather: 16, motto: "Deep roots, strong timber", difficulty: 1 },
@@ -240,12 +240,13 @@ function initGame(cd?: CharData): GS {
   const gender = cd?.gender ?? "male";
   const title = gender === "female" ? "Chieftess" : "Chief";
   const bannerIcon = cd?.banner ? { Lion: "🦁", Eagle: "🦅", Oak: "🌳", Wolf: "🐺", Crown: "♚" }[cd.banner] : "♜";
+  const rulerPath = cd?.path ?? "Forest & Beast";
 
   // Place home in chosen region
   const regionPos = { "Forest Valley": { x: 3500, y: 5000 }, "Golden Plains": { x: 7500, y: 5500 }, "Mountain Highlands": { x: 6500, y: 1800 }, "Coastal Bay": { x: 12000, y: 4800 }, "River Kingdom": { x: 2500, y: 7200 } }[regionChoice];
   const pos = regionPos;
 
-  const ruler: Family = { id: "ruler", name: `${firstName} ${houseName}`, age: 40, role: `${title} of Hearthmere`, path: "Forest & Beast", traits: ["orphaned", "patient", "woods-wise"], status: "Living" };
+  const ruler: Family = { id: "ruler", name: `${firstName} ${houseName}`, age: 40, role: `${title} of Hearthmere`, path: rulerPath as Path, traits: ["orphaned", "patient", "woods-wise"], status: "Living" };
 
   // Scale resources by difficulty (harder = fewer starting resources)
   const diffScale = 1 / rc.difficulty;
@@ -286,7 +287,7 @@ const promoteRank = (g: GS) => { const s = g.pop + g.prestige * 2 + g.rep.prospe
 const demotionThreshold = (rank: string) => ({ "King of the Realm": 1500, "Regional Lord": 1000, "Great Barony": 700, "Small Barony": 500, "Petty Barony": 350, "City": 220, "Town": 140, "Village": 70, "Hamlet": 0 } as Record<string, number>)[rank] ?? 0;
 
 /* ───────── component ───────── */
-export function GameClient({ charData, onEnding, onSave }: { charData?: { region: RegionChoice; gender: GenderChoice; firstName: string; houseName: string; banner: BannerChoice }; onEnding?: (data: EndingData) => void; onSave?: () => void }) {
+export function GameClient({ charData, onEnding, onSave }: { charData?: { region: RegionChoice; gender: GenderChoice; firstName: string; houseName: string; banner: BannerChoice; path: string }; onEnding?: (data: EndingData) => void; onSave?: () => void }) {
   const [g, setG] = useState<GS>(() => initGame(charData));
   const [mapReady, setMapReady] = useState(false);
   const [panel, setPanel] = useState<Panel>(null);
