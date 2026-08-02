@@ -636,6 +636,17 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           }
         }
 
+        // Cap exploredHexes at 4000 entries to prevent memory growth in long sessions
+        const hexCount = Object.keys(exploredHexes).length;
+        if (hexCount > 4000) {
+          const excess = hexCount - 3500;
+          let removed = 0;
+          for (const k in exploredHexes) {
+            if (removed >= excess) break;
+            if (exploredHexes[k] === 1) { delete exploredHexes[k]; removed++; }
+          }
+        }
+
         const ng: GS = { ...prev, day, year, season, res, rate, pop, popCap, family, ruler, prestige, rep, caravans, baronies, evt, toast, chronicle: extra.length ? [...extra.reverse(), ...prev.chronicle].slice(0, 400) : prev.chronicle, exploredHexes };
         if (seasonRoads) ng.roads = seasonRoads;
         // ──── DEMOTION CHECK ────
@@ -1029,6 +1040,9 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       if (e.key === "ArrowDown" || e.key === "s") setCam(c => ({ ...c, y: cl(c.y + 120 / cz, 0, Math.max(0, H - vp.h / cz)) }));
       if ((e.key === "+" || e.key === "=") && cz < 3.2) setCam(c => ({ ...c, z: cl(c.z * 1.25, 0.08, 3.2) }));
       if (e.key === "-" && cz > 0.08) setCam(c => ({ ...c, z: cl(c.z * 0.8, 0.08, 3.2) }));
+      // Ctrl+S = save, Ctrl+L = load
+      if (e.ctrlKey && e.key === "s") { e.preventDefault(); saveGame(); }
+      if (e.ctrlKey && e.key === "l") { e.preventDefault(); loadGame(); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -1273,10 +1287,20 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
 
       {!mapReady && (
         <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-[#0a0908]">
-          <div className="rounded-2xl border border-[#c8a84e]/25 bg-[#0e0d0b]/90 px-6 py-4 text-center shadow-2xl">
-            <div className="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-white/15 border-t-[#c8a84e]" />
-            <p className="text-[12px] font-semibold text-[#c8a84e]">Opening the Realm</p>
+          <div className="rounded-2xl border border-[#c8a84e]/25 bg-[#0e0d0b]/90 px-8 py-8 text-center shadow-2xl">
+            {/* Shimmer loading skeleton */}
+            <div className="relative mx-auto mb-5 h-48 w-64 overflow-hidden rounded-xl bg-white/5">
+              <div className="absolute inset-0 -translate-x-full animate-[shimmer_2s_infinite] bg-gradient-to-r from-transparent via-white/8 to-transparent" />
+              <div className="absolute inset-0 flex items-center justify-center"><span className="text-5xl">🏰</span></div>
+            </div>
+            <div className="space-y-2">
+              <div className="mx-auto h-3 w-40 overflow-hidden rounded-full bg-white/8"><div className="h-full animate-pulse rounded-full bg-[#c8a84e]/40" style={{ width: '65%' }} /></div>
+              <div className="mx-auto h-2 w-28 overflow-hidden rounded-full bg-white/5"><div className="h-full animate-pulse rounded-full bg-white/10" style={{ width: '45%' }} /></div>
+            </div>
+            <div className="mx-auto mt-4 h-5 w-5 animate-spin rounded-full border-2 border-white/15 border-t-[#c8a84e]" />
+            <p className="mt-3 text-[13px] font-semibold text-[#c8a84e]">Opening the Realm</p>
             <p className="mt-1 text-[10px] text-[#8d8674]">Preparing the map and settlements…</p>
+            <p className="mt-3 text-[9px] text-[#8d8674]/50">Press Space to pause · Arrow keys to pan · Scroll to zoom</p>
           </div>
         </div>
       )}
@@ -1326,9 +1350,9 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
 
         <div data-ui="1" className="pointer-events-auto flex flex-col gap-1">
           <div className="flex gap-1">
-            <button onClick={saveGame} className="rounded-lg bg-emerald-950/70 px-3 py-1.5 text-[10px] font-semibold text-emerald-200 ring-1 ring-emerald-400/20 hover:bg-emerald-900/70">{auth.user ? (syncStatus === "syncing" ? "⏳ Saving…" : syncStatus === "synced" ? "☁ Saved" : "☁ Save") : "Save"}</button>
-            <button onClick={loadGame} className="rounded-lg bg-sky-950/70 px-3 py-1.5 text-[10px] font-semibold text-sky-200 ring-1 ring-sky-400/20 hover:bg-sky-900/70">Load</button>
-            <button onClick={reset} className="rounded-lg bg-red-950/70 px-3 py-1.5 text-[10px] font-semibold text-red-200 ring-1 ring-red-400/20 hover:bg-red-900/70">New</button>
+            <button onClick={saveGame} title="Ctrl+S to save" className={`btn-press rounded-lg px-3 py-1.5 text-[10px] font-semibold ring-1 transition ${syncStatus === "syncing" ? "bg-amber-950/70 text-amber-200 ring-amber-400/20 sync-pulse" : syncStatus === "synced" ? "bg-emerald-950/70 text-emerald-200 ring-emerald-400/20" : "bg-emerald-950/70 text-emerald-200 ring-emerald-400/20 hover:bg-emerald-900/70"}`}>{auth.user ? (syncStatus === "syncing" ? "⏳ Saving…" : syncStatus === "synced" ? "☁ Saved" : "☁ Save") : "Save"}</button>
+            <button onClick={loadGame} title="Ctrl+L to load" className="btn-press rounded-lg bg-sky-950/70 px-3 py-1.5 text-[10px] font-semibold text-sky-200 ring-1 ring-sky-400/20 transition hover:bg-sky-900/70">Load</button>
+            <button onClick={reset} title="Start a new dynasty" className="btn-press rounded-lg bg-red-950/70 px-3 py-1.5 text-[10px] font-semibold text-red-200 ring-1 ring-red-400/20 transition hover:bg-red-900/70">New</button>
             {auth.user
               ? <button onClick={auth.logout} title={auth.user.email} className="rounded-lg bg-white/6 px-3 py-1.5 text-[10px] font-semibold text-[#eee4d0] hover:bg-white/12">👤 Sign out</button>
               : <button onClick={() => auth.setShowAuth(true)} className="rounded-lg bg-[#c8a84e]/20 px-3 py-1.5 text-[10px] font-semibold text-[#c8a84e] ring-1 ring-[#c8a84e]/30 hover:bg-[#c8a84e]/30">Sign in</button>}
@@ -1367,9 +1391,9 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
 
       {/* toast */}
       {g.toast && (
-        <div data-ui="1" className="absolute bottom-24 left-4 z-30 w-72 rounded-2xl border border-white/8 bg-[#0e0d0b]/93 p-3 shadow-xl backdrop-blur-xl">
+        <div data-ui="1" className="toast-enter absolute bottom-24 left-4 z-30 w-72 rounded-2xl border border-white/8 bg-[#0e0d0b]/93 p-3 shadow-xl backdrop-blur-xl">
           <div className="flex gap-2"><img src={g.toast.portrait} alt="" className="h-11 w-9 rounded-lg object-cover" /><div><p className="text-[12px] font-semibold text-[#c8a84e]">{g.toast.title}</p><p className="text-[11px] text-[#bbb5a0]">{g.toast.body}</p></div></div>
-          <div className="mt-2 flex gap-1"><button onClick={() => toggle("Family")} className="flex-1 rounded-lg bg-[#c8a84e] py-1.5 text-[11px] font-semibold text-[#1a1611]">View</button><button onClick={() => setG(p => ({ ...p, toast: null }))} className="rounded-lg bg-white/6 px-3 text-[11px]">✕</button></div>
+          <div className="mt-2 flex gap-1"><button onClick={() => toggle("Family")} className="btn-press flex-1 rounded-lg bg-[#c8a84e] py-1.5 text-[11px] font-semibold text-[#1a1611] transition hover:brightness-110">View</button><button onClick={() => setG(p => ({ ...p, toast: null }))} className="btn-press rounded-lg bg-white/6 px-3 text-[11px] transition hover:bg-white/12">✕</button></div>
         </div>
       )}
 

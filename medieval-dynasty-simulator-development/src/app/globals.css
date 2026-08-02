@@ -127,3 +127,97 @@ button { cursor: pointer; }
   from { transform: rotate(-17deg); }
   to   { transform: rotate(17deg); }
 }
+
+/* ── Shimmer loading effect ── */
+@keyframes shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* ── Panel slide-up animation ── */
+@keyframes panelSlideUp {
+  from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+.drawer {
+  animation: panelSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ── Toast slide-in ── */
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.95); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.toast-enter {
+  animation: toastIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ── Button press effect ── */
+.btn-press:active {
+  transform: scale(0.96);
+  transition: transform 0.08s ease-out;
+}
+
+/* ── Sync pulse ── */
+@keyframes syncPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.sync-pulse {
+  animation: syncPulse 1.5s ease-in-out infinite;
+}
+
+/* ── Fade in for map elements ── */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-in-up {
+  animation: fadeInUp 0.4s ease-out;
+}
+
+/* ── Skeleton pulse ── */
+@keyframes skeletonPulse {
+  0%, 100% { background-color: rgba(255,255,255,0.04); }
+  50% { background-color: rgba(255,255,255,0.08); }
+}
+.skeleton {
+  animation: skeletonPulse 1.5s ease-in-out infinite;
+  border-radius: 8px;
+}
+
+/* ── Tooltip fade ── */
+@keyframes tooltipFade {
+  from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+.tooltip-enter {
+  animation: tooltipFade 0.15s ease-out;
+}
+
+/* ── Resource bar grow ── */
+@keyframes barGrow {
+  from { width: 0%; }
+}
+.bar-grow {
+  animation: barGrow 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ── Mobile responsive bottom padding ── */
+@media (max-width: 640px) {
+  .drawer {
+    left: 50% !important;
+    width: calc(100vw - 16px) !important;
+    max-height: 50vh !important;
+    border-radius: 1.25rem !important;
+  }
+  nav {
+    gap: 0 !important;
+    padding: 0.25rem !important;
+  }
+  nav button {
+    padding: 0.375rem 0.5rem !important;
+    font-size: 10px !important;
+  }
+}
+

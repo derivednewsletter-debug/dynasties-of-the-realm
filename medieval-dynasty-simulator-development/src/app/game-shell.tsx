@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import { MainMenu, type RegionChoice, type BannerChoice, type GenderChoice, type PortraitChoice } from "./main-menu";
 import { IntroCinematic } from "./intro-cinematic";
 import { GameClient } from "./game-client";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { EndingScreen, type EndingData } from "./ending-screen";
 import { OnboardingGate } from "@/components/onboarding-gate";
 
@@ -137,10 +138,12 @@ export function GameShell() {
 
   // Playing phase
   return (
-    <GameClient
-      charData={charData ?? undefined}
-      onEnding={handleEnding}
-      onSave={() => setHasSave(true)}
-    />
+    <ErrorBoundary>
+      <GameClient
+        charData={charData ?? undefined}
+        onEnding={handleEnding}
+        onSave={() => setHasSave(true)}
+      />
+    </ErrorBoundary>
   );
 }
