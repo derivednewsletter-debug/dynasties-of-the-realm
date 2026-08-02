@@ -27,12 +27,12 @@ export function OnboardingGate({ onStartNew, onContinue, onSkipAuth }: Props) {
 
   // ── Auth session ──
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      const u = data.session?.user;
+    supabase.auth.getSession().then((resp: { data: { session: { user: { email?: string; id?: string } | null } | null } }) => {
+      const u = resp.data.session?.user;
       setUser(u ? { email: u.email, id: u.id } : null);
       setLoading(false);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_evt: string, session: { user: { email?: string; id?: string } | null } | null) => {
       const u = session?.user;
       setUser(u ? { email: u.email, id: u.id } : null);
     });

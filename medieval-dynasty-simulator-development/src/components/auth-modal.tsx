@@ -24,11 +24,11 @@ export function useAuth(onUserChange?: (user: User | null) => void) {
 
   // Check session on mount
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setUser(data.session?.user ?? null);
+    supabase.auth.getSession().then((resp: { data: { session: { user: import('@supabase/supabase-js').User | null } | null } }) => {
+      setUser(resp.data.session?.user ?? null);
       setLoading(false);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_event: string, session: { user: import('@supabase/supabase-js').User | null } | null) => {
       const u = session?.user ?? null;
       setUser(u);
       onUserChangeRef.current?.(u);

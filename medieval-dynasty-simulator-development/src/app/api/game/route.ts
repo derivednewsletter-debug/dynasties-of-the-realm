@@ -1,4 +1,4 @@
-import { db } from "@/db";
+import { ensureDb } from "@/db";
 import { dynastySaves } from "@/db/schema";
 import { createClient } from "@/lib/supabase/server";
 import { and, eq, sql } from "drizzle-orm";
@@ -13,7 +13,7 @@ type SavePayload = {
   state?: unknown;
 };
 
-async function ensureSaveTable() {
+async function ensureSaveTable(db: Awaited<ReturnType<typeof ensureDb>>) {
   if (!db) return;
   await db.execute(sql`
     create table if not exists dynasty_saves (
@@ -30,6 +30,7 @@ async function ensureSaveTable() {
 }
 
 export async function GET(request: NextRequest) {
+  const db = await ensureDb();
   if (!db) return Response.json({ ok: false, error: "No database configured" }, { status: 500 });
 
   const supabase = await createClient();
@@ -37,7 +38,7 @@ export async function GET(request: NextRequest) {
   if (!user) return Response.json({ ok: false, error: "Not authenticated" }, { status: 401 });
 
   try {
-    await ensureSaveTable();
+    await ensureSaveTable(db);
     const slot = request.nextUrl.searchParams.get("slot") ?? "autosave";
 
     const rows = await db
@@ -60,6 +61,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const db = await ensureDb();
   if (!db) return Response.json({ ok: false, error: "No database configured" }, { status: 500 });
 
   const supabase = await createClient();
@@ -67,7 +69,7 @@ export async function POST(request: NextRequest) {
   if (!user) return Response.json({ ok: false, error: "Not authenticated" }, { status: 401 });
 
   try {
-    await ensureSaveTable();
+    await ensureSaveTable(db);
     const body = (await request.json()) as SavePayload;
     const slot = body.slot ?? "autosave";
     const houseName = body.houseName ?? "Sheatsley";
