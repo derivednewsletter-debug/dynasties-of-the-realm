@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BattleScreen, type BattleSetup, type BattleOutcome, type UnitType } from "./battle-screen";
 import { AuthModal, useAuth } from "@/components/auth-modal";
+import { type RegionChoice, type BannerChoice, type GenderChoice } from "./main-menu";
+import { type EndingData } from "./ending-screen";
 
 /* ───────── types ───────── */
 type Season = "Spring" | "Summer" | "Autumn" | "Winter";
@@ -25,6 +27,10 @@ interface Caravan { id: string; tid: string; resource: RN; amount: number; days:
 interface Alliance { bid: string; kind: "alliance" | "trade bloc" }
 interface Army { militia: number; archers: number; spearmen: number; knights: number; captains: string[]; training: number }
 
+interface Road { id: string; fromSid: string; toSid: string; level: number; traffic: number }
+interface Faction { id: string; name: string; goal: string; members: number; aggression: number; loyalty: number }
+interface MemoryObj { id: string; text: string; tone: string; year: number; season: Season; spreadTo: string[] }
+
 interface GS {
   day: number; year: number; season: Season;
   ruler: Family; motto: string; rank: string; prestige: number;
@@ -35,6 +41,9 @@ interface GS {
   evt: DecEvt | null; toast: { title: string; body: string; portrait: string } | null;
   prices: Record<RN, number>; caravans: Caravan[]; alliances: Alliance[]; army: Army;
   atWar: string[];
+  roads: Road[]; factions: Faction[]; citizenMemories: MemoryObj[];
+  demotions: number; battlesFought: number; lineagesBorn: number; peakRank: string;
+  dynastyExtinct: boolean;
 }
 
 /* ───────── world constants ───────── */
@@ -223,6 +232,7 @@ function initGame(): GS {
     toast: { title: "A New Chief Rises", body: "Press ▶ to let time flow across the Realm.", portrait: PORTRAITS.ruler },
     prices: { food: 2, wood: 3, stone: 4, iron: 8, coal: 6, fish: 3, wool: 4, leather: 6, herbs: 5, tools: 10, weapons: 15, medicine: 18, silver: 1 },
     caravans: [], alliances: [], army: { militia: 8, archers: 3, spearmen: 2, knights: 0, captains: [], training: 12 }, atWar: [],
+    roads: [], factions: [], citizenMemories: [], demotions: 0, battlesFought: 0, lineagesBorn: 0, peakRank: "Hamlet", dynastyExtinct: false,
   };
 }
 
@@ -236,10 +246,11 @@ function seasonRate(g: GS): Partial<Res> {
   if (g.season === "Summer") { d.stone = (d.stone ?? 0) + 3; d.iron = (d.iron ?? 0) + 2; }
   return d;
 }
-const promoteRank = (g: GS) => { const s = g.pop + g.prestige * 2 + g.rep.prosperity; return s > 780 ? "Regional Lord" : s > 580 ? "Great Barony" : s > 430 ? "Small Barony" : s > 300 ? "City" : s > 210 ? "Town" : s > 135 ? "Village" : "Hamlet"; };
+const promoteRank = (g: GS) => { const s = g.pop + g.prestige * 2 + g.rep.prosperity; return s > 2000 ? "King of the Realm" : s > 1500 ? "Regional Lord" : s > 1100 ? "Great Barony" : s > 780 ? "Small Barony" : s > 580 ? "Petty Barony" : s > 430 ? "City" : s > 300 ? "Town" : s > 210 ? "Village" : "Hamlet"; };
+const demotionThreshold = (rank: string) => ({ "King of the Realm": 1500, "Regional Lord": 1000, "Great Barony": 700, "Small Barony": 500, "Petty Barony": 350, "City": 220, "Town": 140, "Village": 70, "Hamlet": 0 } as Record<string, number>)[rank] ?? 0;
 
 /* ───────── component ───────── */
-export function GameClient() {
+export function GameClient({ charData, onEnding, onSave }: { charData?: { region: RegionChoice; gender: GenderChoice; firstName: string; houseName: string; banner: BannerChoice }; onEnding?: (data: EndingData) => void; onSave?: () => void }) {
   const [g, setG] = useState<GS>(initGame);
   const [mapReady, setMapReady] = useState(false);
   const [panel, setPanel] = useState<Panel>(null);
@@ -304,6 +315,7 @@ export function GameClient() {
         const step = speed;
         let day = prev.day + step, year = prev.year, season = prev.season;
         let family = prev.family, ruler = prev.ruler, pop = prev.pop, popCap = prev.popCap, prestige = prev.prestige;
+        let lineagesBorn = prev.lineagesBorn;
         const extra: ChronEntry[] = [];
         let toast = prev.toast;
         let rep = { ...prev.rep };
@@ -347,6 +359,7 @@ export function GameClient() {
               const ch: Family = { id: uid("h"), name: `${NAMES[(year + pop) % NAMES.length]} Sheatsley`, age: 0, role: "Child of the House", path: PATHS[(year + prestige) % PATHS.length], traits: ["curious"], status: "Living" };
               family = [...family, ch];
               extra.push(chron(year, season, "An Heir Is Born", `${ch.name} born beneath the banner.`, "hope"));
+              lineagesBorn += 1;
             }
             const rr = family.find(m => m.id === ruler.id);
             if (rr?.status === "Dead") {
@@ -371,9 +384,127 @@ export function GameClient() {
         if (Math.random() < 0.008 * step) evt = EVENTS[Math.floor(Math.random() * EVENTS.length)];
 
         const ng: GS = { ...prev, day, year, season, res, rate, pop, popCap, family, ruler, prestige, rep, caravans, baronies, evt, toast, chronicle: extra.length ? [...extra.reverse(), ...prev.chronicle].slice(0, 400) : prev.chronicle };
+        // ──── DEMOTION CHECK ────
         const rank = promoteRank(ng);
-        if (rank !== prev.rank) { ng.chronicle = [chron(year, season, `Risen to ${rank}`, `Hearthmere is now spoken of as a ${rank.toLowerCase()}.`, "glory"), ...ng.chronicle]; ng.popCap = Math.round(popCap * 1.4); }
+        const RANK_ORDER = ["Hamlet","Village","Town","City","Petty Barony","Small Barony","Great Barony","Regional Lord","King of the Realm"];
+        const prevRankIdx = RANK_ORDER.indexOf(prev.rank);
+        const newRankIdx = (["Hamlet","Village","Town","City","Petty Barony","Small Barony","Great Barony","Regional Lord","King of the Realm"]).indexOf(rank);
+        let demotions = prev.demotions;
+        let dynastyExtinct = prev.dynastyExtinct;
+        if (newRankIdx < prevRankIdx) {
+          demotions += 1;
+          popCap = Math.max(60, Math.round(popCap * 0.7));
+          ng.chronicle = [chron(year, season, `Fallen to ${rank}`, `The House has been humbled — fortifications breached, wealth plundered.`, "grief"), ...ng.chronicle];
+          ng.rep = { ...rep, respect: cl01(rep.respect - 12), fear: cl01(rep.fear - 8), prosperity: cl01(rep.prosperity - 15) };
+          ng.res = chRes(ng.res, { silver: -Math.floor(ng.res.silver * 0.4), food: -Math.floor(ng.res.food * 0.25) } as Partial<Res>);
+          ng.pop = Math.max(24, Math.round(ng.pop * 0.6));
+        } else if (newRankIdx > prevRankIdx) {
+          ng.chronicle = [chron(year, season, `Risen to ${rank}`, `Hearthmere is now spoken of as a ${rank.toLowerCase()}.`, "glory"), ...ng.chronicle];
+          ng.popCap = Math.round(popCap * 1.4);
+        }
         ng.rank = rank;
+        ng.demotions = demotions;
+        ng.peakRank = newRankIdx > RANK_ORDER.indexOf(prev.peakRank) ? rank : prev.peakRank;
+
+        // ──── ROAD EVOLUTION (season boundary) ────
+        let roads = [...(prev.roads ?? [])];
+        if (g.settlements.length > 1) {
+          for (const a of g.settlements) for (const b of g.settlements) {
+            if (a.id >= b.id) continue;
+            const dist = Math.hypot(a.x - b.x, b.y - a.y);
+            if (dist > 2500) continue;
+            const existing = roads.find(r => (r.fromSid === a.id && r.toSid === b.id) || (r.fromSid === b.id && r.toSid === a.id));
+            const traffic = Math.min(200, (a.pop + b.pop) / 20 + (existing?.traffic ?? 0) * 0.95);
+            const level = traffic > 140 ? 3 : traffic > 75 ? 2 : traffic > 3 ? 1 : 0;
+            if (level === 0) continue;
+            if (existing) {
+              existing.traffic = traffic;
+              existing.level = level;
+            } else {
+              roads.push({ id: uid("rd"), fromSid: a.id, toSid: b.id, level, traffic });
+            }
+          }
+        }
+        // Move road evolution into the season boundary for performance
+        ng.roads = roads;
+
+        // ──── CITIZEN MEMORY SPREADING ────
+        let memories = (prev.citizenMemories ?? []).map(m => ({ ...m, spreadTo: [...m.spreadTo] }));
+        if (Math.random() < 0.02 * step) {
+          const tone = ng.res.food < ng.pop / 3 ? "grief" : ng.atWar.length > 0 ? "warning" : ng.rep.trust > 70 ? "hope" : "faith";
+          const idx = Math.floor(Math.random() * ng.citizens.length);
+          const c = ng.citizens[idx];
+          if (c) {
+            const m: MemoryObj = { id: uid("mem"), text: `${c.name} remembers ${tone === "grief" ? "the hunger" : tone === "warning" ? "the drums of war" : tone === "hope" ? "the golden harvest" : "the old ways"}.`, tone, year, season, spreadTo: [] };
+            memories.push(m);
+          }
+        }
+        for (const m of memories) {
+          if (Math.random() < 0.15 * step) {
+            const nearby = ng.citizens.filter(c => !m.spreadTo.includes(c.id)).slice(0, 3);
+            for (const c of nearby) m.spreadTo.push(c.id);
+          }
+        }
+        if (memories.length > 200) memories = memories.slice(-200);
+        ng.citizenMemories = memories;
+
+        // ──── LOYALTY & FACTIONS ────
+        const loyaltyScore = cl01(ng.rep.trust + ng.rep.tradition / 2 - (ng.rep.fear > 30 ? 10 : 0) - (ng.atWar.length * 8) - (demotions * 15));
+        let factions = (prev.factions ?? []).map(f => ({ ...f }));
+        if (loyaltyScore < 35 && Math.random() < 0.04 * step && factions.length < 3) {
+          factions.push({
+            id: uid("fc"), name: ["The Discontented","Shadow Council","Free Soil Pact","The Broken Hearth"][factions.length],
+            goal: ["lower taxes","end the war","new leadership","return to old ways"][factions.length],
+            members: Math.floor(ng.pop * (0.08 + Math.random() * 0.12)),
+            aggression: 10 + Math.floor(Math.random() * 40),
+            loyalty: loyaltyScore,
+          });
+        }
+        // Faction events
+        for (const f of factions) {
+          if (Math.random() < 0.03 * step && f.aggression > 50) {
+            if (Math.random() < 0.4) {
+              ng.res = chRes(ng.res, { food: -8, silver: -5 } as Partial<Res>);
+              ng.chronicle = [chron(year, season, `${f.name} Strikes`, `Workers withheld their labor — stores diminished.`, "warning"), ...ng.chronicle];
+            } else if (Math.random() < 0.2) {
+              ng.pop = Math.max(24, ng.pop - Math.floor(f.members * 0.3));
+              ng.chronicle = [chron(year, season, `${f.name} Flees`, `${Math.floor(f.members * 0.3)} souls abandoned the settlement.`, "grief"), ...ng.chronicle];
+            }
+          }
+          f.aggression = cl01(f.aggression + (loyaltyScore < 30 ? 3 : -2));
+          if (f.aggression > 90) {
+            ng.res = chRes(ng.res, { silver: -15, food: -5 } as Partial<Res>);
+            ng.rep.trust = cl01(ng.rep.trust - 8);
+            f.aggression = cl01(f.aggression - 40);
+            ng.chronicle = [chron(year, season, `${f.name} Rises`, `A criminal faction seized a storehouse before the guard restored order.`, "warning"), ...ng.chronicle];
+          }
+        }
+        factions = factions.filter(f => f.members > 2 && f.aggression > 0);
+        ng.factions = factions;
+
+        // ──── AI WARS ────
+        if (Math.random() < 0.015 * step) {
+          const aggressor = baronies[Math.floor(Math.random() * baronies.length)];
+          const target = baronies.filter(b => b.id !== aggressor.id && Math.hypot(b.x - aggressor.x, b.y - aggressor.y) < 2500)[0];
+          if (target && aggressor.house !== "House Sheatsley") {
+            const outcome = Math.random();
+            if (outcome < 0.4) {
+              baronies = baronies.map(b => b.id === target.id ? { ...b, mil: cl01(b.mil - 15), eco: cl01(b.eco - 10), rel: cl(b.rel - 10, -100, 100) } : b);
+              ng.chronicle = [chron(year, season, "War in the Realm", `${aggressor.house} raided ${target.house}.`, "warning"), ...ng.chronicle];
+            } else if (outcome < 0.7) {
+              baronies = baronies.map(b => b.id === aggressor.id ? { ...b, mil: cl01(b.mil - 8) } : b);
+            }
+          }
+        }
+        ng.baronies = baronies;
+        // ──── DYNASTY EXTINCTION CHECK ────
+        const livingHeirs = ng.family.filter(m => m.status === "Living" && m.id !== "mentor");
+        if (livingHeirs.length === 0 && ng.year > 1) {
+          dynastyExtinct = true;
+        }
+        ng.dynastyExtinct = dynastyExtinct;
+        ng.lineagesBorn = lineagesBorn;
+
         return ng;
       });
     }, 500);
@@ -385,6 +516,27 @@ export function GameClient() {
 
   // pause automatically when an event demands a decision
   useEffect(() => { if (g.evt && speedRef.current !== 0) { setSpeed(0); setNotice("Time paused — the council awaits your decision."); } }, [g.evt]);
+
+  // dynasty extinction → trigger ending
+  useEffect(() => {
+    if (g.dynastyExtinct && onEnding) {
+      setSpeed(0);
+      const endingData: EndingData = {
+        chronicle: g.chronicle,
+        houseName: charData?.houseName ?? "Sheatsley",
+        firstName: charData?.firstName ?? g.ruler.name.split(" ")[0],
+        startYear: 1,
+        endYear: g.year,
+        settlements: g.settlements.map(s => ({ id: s.id, name: s.name, type: s.type, x: s.x, y: s.y, peakType: s.type })),
+        peakRank: g.peakRank,
+        totalPrestige: g.prestige,
+        battlesFought: g.battlesFought,
+        lineagesBorn: g.lineagesBorn,
+        demotions: g.demotions,
+      };
+      setTimeout(() => onEnding(endingData), 2000);
+    }
+  }, [g.dynastyExtinct]);
 
   /* ── actions ── */
   const resolveEvt = (o: EvtOpt) => { setConfirmReset(false); setG(p => { if (!p.evt) return p; const rep = { ...p.rep }; for (const [k, v] of Object.entries(o.rep ?? {}) as [keyof Rep, number][]) rep[k] = cl01(rep[k] + v); return { ...p, res: chRes(p.res, o.res ?? {}), rep, prestige: p.prestige + (o.pres ?? 0), evt: null, chronicle: [chron(p.year, p.season, p.evt.title, o.result, "warning"), ...p.chronicle] }; }); };
@@ -451,18 +603,19 @@ export function GameClient() {
     setBattleSetup(null);
     setG(p => {
       const army: Army = { ...p.army, militia: o.survivors.militia, archers: o.survivors.archers, spearmen: o.survivors.spearmen, knights: o.survivors.knights };
-      if (o.withdrew) { setNotice("Your host withdrew from the field."); return { ...p, army, chronicle: [chron(p.year, p.season, "A Withdrawal", `The host retreated from ${selB.name}.`, "grief"), ...p.chronicle] }; }
+      if (o.withdrew) { setNotice("Your host withdrew from the field."); return { ...p, army, battlesFought: p.battlesFought + 1, chronicle: [chron(p.year, p.season, "A Withdrawal", `The host retreated from ${selB.name}.`, "grief"), ...p.chronicle] }; }
       if (o.victory) {
         setNotice(`Victory over ${selB.house}!`);
-        return { ...p, army, prestige: p.prestige + 10, res: chRes(p.res, { silver: 40, food: 12 }), rep: { ...p.rep, fear: cl01(p.rep.fear + 8), respect: cl01(p.rep.respect + 6) }, baronies: p.baronies.map(b => b.id === selB.id ? { ...b, mil: cl01(b.mil - 25), rel: cl(b.rel - 20, -100, 100) } : b), chronicle: [chron(p.year, p.season, "A Battle Won", `${selB.house} was broken in the field. ${o.enemyKilled} enemies fell.`, "glory"), ...p.chronicle] };
+        return { ...p, army, prestige: p.prestige + 10, battlesFought: p.battlesFought + 1, res: chRes(p.res, { silver: 40, food: 12 }), rep: { ...p.rep, fear: cl01(p.rep.fear + 8), respect: cl01(p.rep.respect + 6) }, baronies: p.baronies.map(b => b.id === selB.id ? { ...b, mil: cl01(b.mil - 25), rel: cl(b.rel - 20, -100, 100) } : b), chronicle: [chron(p.year, p.season, "A Battle Won", `${selB.house} was broken in the field. ${o.enemyKilled} enemies fell.`, "glory"), ...p.chronicle] };
       }
       setNotice("Your army was broken.");
-      return { ...p, army, prestige: Math.max(0, p.prestige - 6), rep: { ...p.rep, respect: cl01(p.rep.respect - 5) }, chronicle: [chron(p.year, p.season, "A Battle Lost", `The host was shattered before ${selB.name}.`, "grief"), ...p.chronicle] };
+      return { ...p, army, prestige: Math.max(0, p.prestige - 6), battlesFought: p.battlesFought + 1, rep: { ...p.rep, respect: cl01(p.rep.respect - 5) }, chronicle: [chron(p.year, p.season, "A Battle Lost", `The host was shattered before ${selB.name}.`, "grief"), ...p.chronicle] };
     });
   }, [selB]);
 
   const saveGame = async () => {
     setConfirmReset(false);
+    onSave?.();
     if (!auth.user) { setNotice("Sign in to save your dynasty to the cloud."); auth.setShowAuth(true); return; }
     setNotice("Saving…");
     const r = await fetch("/api/game", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slot: "autosave", houseName: "Sheatsley", rulerName: g.ruler.name, state: g }) });
@@ -522,11 +675,39 @@ export function GameClient() {
     if (q) list = list.filter(e => `${e.title} ${e.text}`.toLowerCase().includes(q));
     if (cTone !== "all") list = list.filter(e => e.tone === cTone);
     return list;
-  }, [cSearch, cTone, g.chronicle]);
-  const alerts = useMemo(() => { const l: string[] = []; if (g.res.food < g.pop / 2) l.push("Food stores are low."); if (g.season === "Winter" && g.res.wood < 20) l.push("Firewood is critically low."); if (g.family.some(m => m.role === "Child of the House" && m.age === 16)) l.push("A child has come of age."); if (g.atWar.length) l.push(`At war with ${g.atWar.length} house(s).`); if (!l.length) l.push("All is quiet across the Realm."); return l; }, [g]);
+  }, [cSearch, cTone, g.chronicle]);    const alerts = useMemo(() => {
+    const l: string[] = [];
+    if (g.res.food < g.pop / 2) l.push("Food stores are low.");
+    if (g.season === "Winter" && g.res.wood < 20) l.push("Firewood is critically low.");
+    if (g.family.some(m => m.role === "Child of the House" && m.age === 16)) l.push("A child has come of age.");
+    if (g.atWar.length) l.push(`At war with ${g.atWar.length} house(s).`);
+    if ((g.factions ?? []).length) {
+      for (const f of (g.factions ?? [])) {
+        if (f.aggression > 70) l.push(`Faction "${f.name}" is growing violent — ${f.members} members seek ${f.goal}.`);
+        else if (f.aggression > 40) l.push(`Faction "${f.name}" voices discontent — ${f.members} followers.`);
+      }
+    }
+    if (g.dynastyExtinct) l.push("The House has no living heirs. The dynasty will end.");
+    if (!l.length) l.push("All is quiet across the Realm.");
+    return l;
+  }, [g]);
 
   const vW = vp.w / cam.z, vH = vp.h / cam.z;
   const visible = (x: number, y: number, pad: number) => x > cam.x - pad && x < cam.x + vW + pad && y > cam.y - pad && y < cam.y + vH + pad;
+
+  // Apply charData to customize starting position
+  useEffect(() => {
+    if (!charData) return;
+    const regionMap: Record<RegionChoice, { x: number; y: number }> = {
+      "Forest Valley": { x: 3500, y: 5000 },
+      "Golden Plains": { x: 7500, y: 5500 },
+      "Mountain Highlands": { x: 6500, y: 1800 },
+      "Coastal Bay": { x: 12000, y: 4800 },
+      "River Kingdom": { x: 2500, y: 7200 },
+    };
+    const pos = regionMap[charData.region];
+    center(pos.x, pos.y, 0.55);
+  }, []); // run once on mount
 
   const LOD = { crests: cam.z < 1.6, settles: cam.z >= 0.12, art: cam.z >= 0.8, people: cam.z >= 0.95, names: cam.z >= 0.18 };
   const visSettles = useMemo(() => g.settlements.filter(s => visible(s.x, s.y, 900)), [g.settlements, cam, vp]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -563,6 +744,15 @@ export function GameClient() {
           {/* thin barony borders */}
           <svg className="pointer-events-none absolute inset-0" width={W} height={H}>
             {borders.map((b, i) => <path key={i} d={b.d} stroke={b.col} strokeWidth={b.w} fill="none" strokeDasharray="14 10" />)}
+            {/* roads */}
+            {(g.roads ?? []).filter(r => r.level >= 2).map(r => {
+              const a = g.settlements.find(s => s.id === r.fromSid);
+              const b2 = g.settlements.find(s => s.id === r.toSid);
+              if (!a || !b2) return null;
+              const colors = ["", "", "rgba(180,160,120,0.25)", "rgba(180,160,120,0.45)"];
+              const widths = [0, 0, 2.5, 4.5];
+              return <line key={`rd-${r.id}`} x1={a.x} y1={a.y} x2={b2.x} y2={b2.y} stroke={colors[r.level]} strokeWidth={widths[r.level]} strokeDasharray={r.level === 3 ? "none" : "10 8"} />;
+            })}
           </svg>
 
           {g.caravans.map(caravan => {
