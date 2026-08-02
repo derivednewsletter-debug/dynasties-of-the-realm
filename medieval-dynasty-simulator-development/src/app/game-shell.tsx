@@ -147,3 +147,5 @@ export function GameShell() {
     </ErrorBoundary>
   );
 }
+
+export default GameShell;
