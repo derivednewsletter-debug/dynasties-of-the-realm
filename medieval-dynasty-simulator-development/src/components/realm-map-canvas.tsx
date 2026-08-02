@@ -255,6 +255,13 @@ export function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY
   const rafRef = useRef(0);
   const stateRef = useRef({ atWar, baronies, roads, settlements, camX, camY, zoom, staticMode });
   stateRef.current = { atWar, baronies, roads, settlements, camX, camY, zoom, staticMode };
+  const settMapRef = useRef(new Map<string, { x: number; y: number }>());
+  // Recreate settMap when settlements length or first item changes (avoids stale refs)
+  const prevSettLenRef = useRef(settlements.length);
+  if (prevSettLenRef.current !== settlements.length || (settlements.length > 0 && !settMapRef.current.has(settlements[0].id))) {
+    prevSettLenRef.current = settlements.length;
+    settMapRef.current = new Map(settlements.map(ss => [ss.id, ss]));
+  }
 
   const drawFrame = useCallback(() => {
     const canvas = canvasRef.current;
@@ -278,7 +285,9 @@ export function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY
     ctx.save();
 
     if (s.staticMode) {
-      // Static mode: fill entire map at once (for minimap)
+      // Static mode: scale entire world into minimap canvas
+      const scale = Math.min(rect.width / W, rect.height / H);
+      ctx.scale(scale, scale);
       ctx.fillStyle = "#d4caa5";
       ctx.fillRect(0, 0, W, H);
       const edgeGrad = ctx.createRadialGradient(W / 2, H / 2, 2000, W / 2, H / 2, 8000);
@@ -286,13 +295,12 @@ export function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY
       edgeGrad.addColorStop(1, "rgba(160,150,120,0.3)");
       ctx.fillStyle = edgeGrad;
       ctx.fillRect(0, 0, W, H);
+      // Skip hex grid in staticMode — too wasteful at minimap scale
       drawDecorations(ctx);
       drawRegionOverlays(ctx);
-      drawCompass(ctx);
-      drawTitleBanner(ctx);
       drawBaronyBorders(ctx, s.baronies, s.atWar);
-      const settMap = new Map(s.settlements.map(ss => [ss.id, ss]));
-      drawRoads(ctx, s.roads, settMap);
+      drawRoads(ctx, s.roads, settMapRef.current);
+      drawWarZones(ctx, s.atWar, s.baronies);
     } else {
       // Dynamic mode: camera-transformed
       ctx.translate(-s.camX * s.zoom, -s.camY * s.zoom);
@@ -312,8 +320,7 @@ export function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY
       drawDecorations(ctx);
       drawRegionOverlays(ctx);
       drawBaronyBorders(ctx, s.baronies, s.atWar);
-      const settMap = new Map(s.settlements.map(ss => [ss.id, ss]));
-      drawRoads(ctx, s.roads, settMap);
+      drawRoads(ctx, s.roads, settMapRef.current);
       drawWarZones(ctx, s.atWar, s.baronies);
       drawCompass(ctx);
       drawTitleBanner(ctx);
