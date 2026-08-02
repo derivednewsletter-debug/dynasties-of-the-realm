@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BattleScreen, type BattleSetup, type BattleOutcome, type UnitType } from "./battle-screen";
 import { AuthModal, useAuth } from "@/components/auth-modal";
+import { REALM_MAP, SETTLEMENT_SVGS, PORTRAIT_SVGS } from "@/components/game-svgs";
 import { type RegionChoice, type BannerChoice, type GenderChoice } from "./main-menu";
 import { type EndingData } from "./ending-screen";
 
@@ -70,7 +71,7 @@ const RCOL: Record<Region, string> = {
   "Eastern Coast": "#4d97a8",
   "Southern Wilds": "#5a9a52",
 };
-const PORTRAITS = { ruler: "/images/portrait-ruler.jpg", spouse: "/images/portrait-spouse.jpg", heir: "/images/portrait-heir.jpg", mentor: "/images/portrait-mentor.jpg" };
+const PORTRAITS = { ruler: PORTRAIT_SVGS.ruler, spouse: PORTRAIT_SVGS.spouse, heir: PORTRAIT_SVGS.heir, mentor: PORTRAIT_SVGS.mentor };
 const RICONS: Record<RN, string> = { food: "🌾", wood: "🪵", stone: "🪨", iron: "⛏", coal: "◼", fish: "🐟", wool: "🐑", leather: "🧶", herbs: "🌿", tools: "🔧", weapons: "⚔️", medicine: "💊", silver: "🪙" };
 const TICKER: RN[] = ["food", "wood", "stone", "iron", "tools", "weapons", "silver"];
 const NAMES = ["Alden","Mira","Rowan","Elowen","Cedric","Brina","Osric","Tamsin","Gareth","Isolde","Perrin","Anwen","Edric","Liora","Maera","Alaric","Duncan","Maelys"];
@@ -135,7 +136,7 @@ const fmtD = (d: Partial<Res>) => { const e = (Object.entries(d) as [RN, number]
 const portrait = (m: Family, i: number) => m.id === "mentor" ? PORTRAITS.mentor : m.role.includes("Chief") ? PORTRAITS.ruler : i % 2 === 0 ? PORTRAITS.heir : PORTRAITS.spouse;
 const renown = (r: number) => r > 80 ? "Renowned" : r > 60 ? "Respected" : r > 40 ? "Known" : "Obscure";
 const sIcon = (t: SType, h: boolean) => h ? "♜" : t === "city" ? "🏛" : t === "town" ? "🏰" : t === "village" ? "🏠" : "🛖";
-const sImg = (t: SType, h: boolean) => h ? "/images/hamlet-map.jpg" : t === "city" ? "/images/city-detail.jpg" : t === "town" ? "/images/town-detail.jpg" : "/images/village-detail.jpg";
+const sImg = (t: SType, h: boolean) => h ? SETTLEMENT_SVGS.hamlet : t === "city" ? SETTLEMENT_SVGS.city : t === "town" ? SETTLEMENT_SVGS.town : SETTLEMENT_SVGS.village;
 const sArt = (t: SType, h: boolean) => h ? 760 : t === "city" ? 1150 : t === "town" ? 900 : t === "village" ? 660 : 520;
 const chron = (y: number, s: Season, t: string, tx: string, tone: string): ChronEntry => ({ id: uid("c"), year: y, season: s, title: t, text: tx, tone });
 
@@ -328,9 +329,9 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
     base.decoding = "async";
     base.onload = () => setMapReady(true);
     base.onerror = () => setMapReady(true);
-    base.src = "/images/realm-map.jpg";
+    base.src = REALM_MAP;
     const idle = window.setTimeout(() => {
-      for (const src of ["/images/hamlet-map.jpg", "/images/village-detail.jpg", "/images/town-detail.jpg", "/images/city-detail.jpg"]) {
+      for (const src of [SETTLEMENT_SVGS.hamlet, SETTLEMENT_SVGS.village, SETTLEMENT_SVGS.town, SETTLEMENT_SVGS.city]) {
         const img = new Image();
         img.decoding = "async";
         img.src = src;
@@ -880,7 +881,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
       {/* ════ MAP ════ */}
       <div ref={mapRef} className={`absolute inset-0 select-none ${drag.current.on ? "cursor-grabbing" : "cursor-grab"}`} style={{ touchAction: "none" }} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel}>
         <div className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ width: W, height: H, transform: `translate(${-cam.x * cam.z}px,${-cam.y * cam.z}px) scale(${cam.z})` }}>
-          <div className="absolute inset-0" style={{ backgroundImage: "url(/images/realm-map.jpg)", backgroundSize: "100% 100%" }} />
+          <div className="absolute inset-0" style={{ backgroundImage: `url(${REALM_MAP})`, backgroundSize: "100% 100%" }} />
           <div className="absolute inset-0" style={{ background: "radial-gradient(circle at 50% 15%, rgba(107,156,196,.16), transparent 26%), radial-gradient(circle at 50% 50%, rgba(200,168,78,.13), transparent 26%), radial-gradient(circle at 15% 47%, rgba(138,128,120,.15), transparent 22%), radial-gradient(circle at 85% 45%, rgba(77,151,168,.15), transparent 22%), radial-gradient(circle at 50% 84%, rgba(90,154,82,.15), transparent 24%)" }} />
 
           {/* thin barony borders */}
@@ -1078,7 +1079,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
       <div data-ui="1" className="absolute bottom-4 right-4 z-30 w-52 rounded-2xl border border-white/8 bg-[#0e0d0b]/88 p-2 shadow-xl backdrop-blur-xl">
         <div className="mb-1 flex justify-between px-0.5 text-[9px] uppercase tracking-wider text-[#8d8674]"><span>The Realm</span><span>{Math.round(cam.z * 100)}%</span></div>
         <div className="relative h-32 w-full cursor-crosshair overflow-hidden rounded-lg" onClick={onMini}>
-          <div className="absolute inset-0 opacity-55" style={{ backgroundImage: "url(/images/realm-map.jpg)", backgroundSize: "100% 100%" }} />
+          <div className="absolute inset-0 opacity-55" style={{ backgroundImage: `url(${REALM_MAP})`, backgroundSize: "100% 100%" }} />
           {g.baronies.map(b => <span key={b.id} className="absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full" style={{ left: `${b.x / W * 100}%`, top: `${b.y / H * 100}%`, background: g.atWar.includes(b.id) ? "#e05a4a" : g.alliances.some(a => a.bid === b.id) ? "#57c07a" : b.color }} />)}
           <span className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#c8a84e] bg-[#6b1f1f]" style={{ left: `${home.x / W * 100}%`, top: `${home.y / H * 100}%` }} />
           <div className="absolute border-2 border-[#c8a84e]/90 bg-[#c8a84e]/10" style={{ left: `${cam.x / W * 100}%`, top: `${cam.y / H * 100}%`, width: `${Math.min(100, vW / W * 100)}%`, height: `${Math.min(100, vH / H * 100)}%` }} />
