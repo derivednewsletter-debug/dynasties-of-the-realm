@@ -207,7 +207,8 @@ async function encrypt(text: string): Promise<string> {
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
     const ciphertext = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data);
     const combined = new Uint8Array([...iv, ...new Uint8Array(ciphertext)]);
-    return btoa(String.fromCharCode(...combined));
+    const binary = Array.from(combined, byte => String.fromCharCode(byte)).join("");
+    return btoa(binary);
   } catch {
     return text;
   }
