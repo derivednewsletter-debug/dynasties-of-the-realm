@@ -350,6 +350,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   const [cTone, setCTone] = useState<"all" | ChronEntry["tone"]>("all");
   const [cTab, setCTab] = useState<"Info" | "Skills" | "Memories">("Info");
   const [confirmReset, setConfirmReset] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "synced" | "error">("idle");
 
   // Auth
   const auth = useAuth();
@@ -362,6 +363,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   const speedRef = useRef(speed); speedRef.current = speed;
 
   const camRef = useRef(cam); camRef.current = cam;
+  const gRef = useRef(g); gRef.current = g;
 
   const home = useMemo(() => g.settlements.find(s => s.home) ?? g.settlements[0], [g.settlements]);
   const selB = g.baronies.find(b => b.id === g.selBid) ?? g.baronies[0];
@@ -389,8 +391,63 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
     }, 120);
     return () => window.clearTimeout(idle);
   }, []);
-  useEffect(() => { try { const d = localStorage.getItem("dotr-v8"); if (d) { const p = JSON.parse(d) as GS; if (p.prices && p.army && p.settlements?.length && typeof p.day === "number") { setG(p); setNotice("Chronicle restored."); } } } catch { /* ignore */ } }, []);
+  // Load from localStorage on mount, then try cloud if logged in
+  useEffect(() => {
+    try {
+      const d = localStorage.getItem("dotr-v8");
+      if (d) {
+        const p = JSON.parse(d) as GS;
+        if (p.prices && p.army && p.settlements?.length && typeof p.day === "number") { setG(p); setNotice("Chronicle restored."); }
+      }
+    } catch { /* ignore */ }
+  }, []);
+  // Try loading from Supabase cloud when user logs in
+  useEffect(() => {
+    if (!auth.user) return;
+    (async () => {
+      try {
+        setSyncStatus("syncing");
+        const r = await fetch("/api/game?slot=autosave");
+        if (!r.ok) { setSyncStatus("idle"); return; }
+        const d = await r.json() as { save?: { payload?: GS } | null };
+        if (d.save?.payload?.prices && d.save.payload.army && typeof d.save.payload.day === "number") {
+          const cloud = d.save.payload;
+          const local = gRef.current;
+          // Prefer whichever save is more advanced (higher day + year*365)
+          const cloudScore = (cloud.year ?? 0) * 365 + (cloud.day ?? 0) + (cloud.prestige ?? 0) * 0.01;
+          const localScore = (local.year ?? 0) * 365 + (local.day ?? 0) + (local.prestige ?? 0) * 0.01;
+          if (cloudScore > localScore) {
+            setG(cloud);
+            setNotice("Cloud Chronicle loaded — newer than local save.");
+            setSyncStatus("synced");
+            onSave?.();
+            setTimeout(() => setSyncStatus("idle"), 5000);
+          } else {
+            setNotice("Local save is newer — cloud not loaded.");
+            setSyncStatus("idle");
+          }
+        } else {
+          setSyncStatus("idle");
+        }
+      } catch { setSyncStatus("error"); }
+    })();
+  }, [auth.user]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Always save to localStorage
   useEffect(() => { const t = setTimeout(() => localStorage.setItem("dotr-v8", JSON.stringify(g)), 400); return () => clearTimeout(t); }, [g]);
+  // Auto-save to Supabase cloud every 30 seconds when logged in
+  useEffect(() => {
+    if (!auth.user) return;
+    const id = setInterval(async () => {
+      const gs = gRef.current;
+      setSyncStatus("syncing");
+      try {
+        const r = await fetch("/api/game", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slot: "autosave", houseName: gs.baronies[0]?.house ?? "House Sheatsley", rulerName: gs.ruler.name, state: gs }) });
+        setSyncStatus(r.ok ? "synced" : "error");
+        if (r.ok) { setTimeout(() => setSyncStatus("idle"), 5000); onSave?.(); }
+      } catch { setSyncStatus("error"); }
+    }, 30000);
+    return () => clearInterval(id);
+  }, [auth.user]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const fn = () => { if (!mapRef.current) return; const r = mapRef.current.getBoundingClientRect(); setVp({ w: r.width, h: r.height }); }; fn(); window.addEventListener("resize", fn); return () => window.removeEventListener("resize", fn); }, []);
   useEffect(() => { center(home.x, home.y, 0.55); }, [vp.w, vp.h]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -827,7 +884,10 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
     onSave?.();
     if (!auth.user) { setNotice("Sign in to save your dynasty to the cloud."); auth.setShowAuth(true); return; }
     setNotice("Saving…");
-    const r = await fetch("/api/game", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slot: "autosave", houseName: "Sheatsley", rulerName: g.ruler.name, state: g }) });
+    setSyncStatus("syncing");
+    const r = await fetch("/api/game", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slot: "autosave", houseName: g.baronies[0]?.house ?? "House Sheatsley", rulerName: g.ruler.name, state: g }) });
+    setSyncStatus(r.ok ? "synced" : "error");
+    if (r.ok) setTimeout(() => setSyncStatus("idle"), 5000);
     setNotice(r.ok ? "Saved to the realm archive." : "Save failed.");
   };
   const loadGame = async () => {
@@ -1118,7 +1178,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
 
         <div data-ui="1" className="pointer-events-auto flex flex-col gap-1">
           <div className="flex gap-1">
-            <button onClick={saveGame} className="rounded-lg bg-emerald-950/70 px-3 py-1.5 text-[10px] font-semibold text-emerald-200 ring-1 ring-emerald-400/20 hover:bg-emerald-900/70">{auth.user ? "☁ Save" : "Save"}</button>
+            <button onClick={saveGame} className="rounded-lg bg-emerald-950/70 px-3 py-1.5 text-[10px] font-semibold text-emerald-200 ring-1 ring-emerald-400/20 hover:bg-emerald-900/70">{auth.user ? (syncStatus === "syncing" ? "⏳ Saving…" : syncStatus === "synced" ? "☁ Saved" : "☁ Save") : "Save"}</button>
             <button onClick={loadGame} className="rounded-lg bg-sky-950/70 px-3 py-1.5 text-[10px] font-semibold text-sky-200 ring-1 ring-sky-400/20 hover:bg-sky-900/70">Load</button>
             <button onClick={reset} className="rounded-lg bg-red-950/70 px-3 py-1.5 text-[10px] font-semibold text-red-200 ring-1 ring-red-400/20 hover:bg-red-900/70">New</button>
             {auth.user
