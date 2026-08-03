@@ -800,7 +800,14 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   const [hover, setHover] = useState<{ x: number; y: number; label: string; sub: string } | null>(null);
 
   const mapRef = useRef<HTMLDivElement>(null);
+  const mapInnerRef = useRef<HTMLDivElement>(null);
   const drag = useRef({ on: false, sx: 0, sy: 0, cx: 0, cy: 0, moved: false, lastFrame: 0 });
+  // Direct camera ref for bypassing React render cycle during pan/zoom
+  const camDirectRef = useRef({ x: 0, y: 0, z: 0.35 });
+  function syncCamTransform(x: number, y: number, z: number) {
+    if (mapInnerRef.current) mapInnerRef.current.style.transform = `translate(${-x * z}px,${-y * z}px) scale(${z})`;
+    camDirectRef.current = { x, y, z };
+  }
   const speedRef = useRef(speed); speedRef.current = speed;
 
   const camRef = useRef(cam); camRef.current = cam;
@@ -1739,11 +1746,16 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
 
   /* ── map input ── */
   const onDown = (e: React.PointerEvent) => { if ((e.target as HTMLElement).closest("[data-ui]")) return; drag.current = { on: true, sx: e.clientX, sy: e.clientY, cx: cam.x, cy: cam.y, moved: false, lastFrame: 0 }; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); };
-  const onMove = (e: React.PointerEvent) => { if (buildMode && placeBuildId) { const r = mapRef.current?.getBoundingClientRect(); if (r) { const wx = cam.x + (e.clientX - r.left) / cam.z; const wy = cam.y + (e.clientY - r.top) / cam.z; ghostRef.current = { x: wx, y: wy }; const now = performance.now(); if (now - ghostTickRef.current > 16) { ghostTickRef.current = now; setGhostRender(n => n + 1); } } } if (!drag.current.on) return; const dx = e.clientX - drag.current.sx, dy = e.clientY - drag.current.sy; if (Math.hypot(dx, dy) > 4) drag.current.moved = true; // Throttle drag re-renders to ~30fps to prevent lag during fast panning
+  const onMove = (e: React.PointerEvent) => { if (buildMode && placeBuildId) { const r = mapRef.current?.getBoundingClientRect(); if (r) { const wx = cam.x + (e.clientX - r.left) / cam.z; const wy = cam.y + (e.clientY - r.top) / cam.z; ghostRef.current = { x: wx, y: wy }; const now = performance.now(); if (now - ghostTickRef.current > 16) { ghostTickRef.current = now; setGhostRender(n => n + 1); } } } if (!drag.current.on) return; const dx = e.clientX - drag.current.sx, dy = e.clientY - drag.current.sy; if (Math.hypot(dx, dy) > 4) drag.current.moved = true; // Direct DOM transform — bypasses React render for 60fps smooth pan
+      const nz = cam.z;
+      const newX = cl(drag.current.cx - dx / nz, 0, Math.max(0, W - vp.w / nz));
+      const newY = cl(drag.current.cy - dy / nz, 0, Math.max(0, H - vp.h / nz));
+      syncCamTransform(newX, newY, nz);
+      // Throttled React state update for culling/LOD (~10fps)
       const now = performance.now();
-      if (now - (drag.current as any).lastFrame < 32) return;
-      (drag.current as any).lastFrame = now;
-      setCam(c => ({ ...c, x: cl(drag.current.cx - dx / c.z, 0, Math.max(0, W - vp.w / c.z)), y: cl(drag.current.cy - dy / c.z, 0, Math.max(0, H - vp.h / c.z)) })); };
+      if (now - drag.current.lastFrame < 100) return;
+      drag.current.lastFrame = now;
+      setCam(c => ({ ...c, x: newX, y: newY })); };
   const onUp = (e: React.PointerEvent) => {
     const wasMoved = drag.current.moved;
     drag.current.on = false;
@@ -1759,7 +1771,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       if (bi >= 0) pickB(g.baronies[bi]);
     }
   };
-  const onWheel = (e: React.WheelEvent) => { e.preventDefault(); e.stopPropagation(); const r = mapRef.current?.getBoundingClientRect(); if (!r) return; const mx = e.clientX - r.left, my = e.clientY - r.top; setCam(c => { const wx = c.x + mx / c.z, wy = c.y + my / c.z; const nz = cl(c.z * (e.deltaY > 0 ? 0.96 : 1.04), 0.08, 3.2); return { z: nz, x: cl(wx - mx / nz, 0, Math.max(0, W - vp.w / nz)), y: cl(wy - my / nz, 0, Math.max(0, H - vp.h / nz)) }; }); };
+  const onWheel = (e: React.WheelEvent) => { e.preventDefault(); e.stopPropagation(); const r = mapRef.current?.getBoundingClientRect(); if (!r) return; const mx = e.clientX - r.left, my = e.clientY - r.top; const c = camDirectRef.current; const wx = c.x + mx / c.z, wy = c.y + my / c.z; const nz = cl(c.z * (e.deltaY > 0 ? 0.96 : 1.04), 0.08, 3.2); const nx = cl(wx - mx / nz, 0, Math.max(0, W - vp.w / nz)); const ny = cl(wy - my / nz, 0, Math.max(0, H - vp.h / nz)); syncCamTransform(nx, ny, nz); setCam({ z: nz, x: nx, y: ny }); };
 
   const toggle = useCallback((p: Panel) => { setConfirmReset(false); setPanel(cur => cur === p ? null : p); }, []);
   const pickS = useCallback((s: Settlement, focus = false) => { setG(p => ({ ...p, selSid: s.id, selBid: s.bid, selCid: null })); setPanel("Settlement"); if (focus) center(s.x, s.y, 1.1); }, [center]);
@@ -1874,7 +1886,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     <main className="relative h-screen w-screen overflow-hidden bg-[#0a0908] text-[#eee4d0]">
       {/* ════ MAP ════ */}
       <div ref={mapRef} className={`absolute inset-0 select-none ${drag.current.on ? "cursor-grabbing" : "cursor-grab"}`} style={{ touchAction: "none" }} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel}>
-        <div className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ width: W, height: H, transform: `translate(${-cam.x * cam.z}px,${-cam.y * cam.z}px) scale(${cam.z})` }}>
+        <div ref={mapInnerRef} className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ width: W, height: H }}>
           <RealmMapCanvas atWar={g.atWar} baronies={g.baronies} roads={g.roads ?? []} settlements={g.settlements} camX={cam.x} camY={cam.y} zoom={cam.z} exploredHexes={g.exploredHexes} season={g.season} />
 
           {/* thin barony borders — only rendered when zoomed in enough to see them */}
