@@ -2041,7 +2041,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
             return (
               <div key={k} className="flex flex-col items-center px-2" title={`${k}: ${Math.round(g.res[k])} (${rate >= 0 ? "+" : ""}${rate.toFixed(1)}/season)`}>
                 <span className="flex items-center leading-none"><GameIcon uri={RICONS[k]} size={14} /></span>
-                <span className="mt-0.5 text-[12px] font-semibold tabular-nums leading-none">{Math.floor(g.res[k])}</span>
+                <span className={`mt-0.5 text-[12px] font-semibold tabular-nums leading-none ${k === "food" && g.res.food < g.pop / 3 ? "resource-critical" : ""}`}>{Math.floor(g.res[k])}</span>
                 <span className={`text-[9px] tabular-nums leading-none ${rate >= 0 ? "text-emerald-400" : "text-red-400"}`}>{rate >= 0 ? "+" : ""}{rate.toFixed(0)}</span>
               </div>
             );
