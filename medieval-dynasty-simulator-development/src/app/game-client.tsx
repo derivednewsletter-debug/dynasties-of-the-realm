@@ -800,7 +800,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   const [hover, setHover] = useState<{ x: number; y: number; label: string; sub: string } | null>(null);
 
   const mapRef = useRef<HTMLDivElement>(null);
-  const drag = useRef({ on: false, sx: 0, sy: 0, cx: 0, cy: 0, moved: false });
+  const drag = useRef({ on: false, sx: 0, sy: 0, cx: 0, cy: 0, moved: false, lastFrame: 0 });
   const speedRef = useRef(speed); speedRef.current = speed;
 
   const camRef = useRef(cam); camRef.current = cam;
@@ -1738,8 +1738,12 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
   }, [battleSetup, g.evt, vp]);
 
   /* ── map input ── */
-  const onDown = (e: React.PointerEvent) => { if ((e.target as HTMLElement).closest("[data-ui]")) return; drag.current = { on: true, sx: e.clientX, sy: e.clientY, cx: cam.x, cy: cam.y, moved: false }; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); };
-  const onMove = (e: React.PointerEvent) => { if (buildMode && placeBuildId) { const r = mapRef.current?.getBoundingClientRect(); if (r) { const wx = cam.x + (e.clientX - r.left) / cam.z; const wy = cam.y + (e.clientY - r.top) / cam.z; ghostRef.current = { x: wx, y: wy }; const now = performance.now(); if (now - ghostTickRef.current > 16) { ghostTickRef.current = now; setGhostRender(n => n + 1); } } } if (!drag.current.on) return; const dx = e.clientX - drag.current.sx, dy = e.clientY - drag.current.sy; if (Math.hypot(dx, dy) > 4) drag.current.moved = true; setCam(c => ({ ...c, x: cl(drag.current.cx - dx / c.z, 0, Math.max(0, W - vp.w / c.z)), y: cl(drag.current.cy - dy / c.z, 0, Math.max(0, H - vp.h / c.z)) })); };
+  const onDown = (e: React.PointerEvent) => { if ((e.target as HTMLElement).closest("[data-ui]")) return; drag.current = { on: true, sx: e.clientX, sy: e.clientY, cx: cam.x, cy: cam.y, moved: false, lastFrame: 0 }; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); };
+  const onMove = (e: React.PointerEvent) => { if (buildMode && placeBuildId) { const r = mapRef.current?.getBoundingClientRect(); if (r) { const wx = cam.x + (e.clientX - r.left) / cam.z; const wy = cam.y + (e.clientY - r.top) / cam.z; ghostRef.current = { x: wx, y: wy }; const now = performance.now(); if (now - ghostTickRef.current > 16) { ghostTickRef.current = now; setGhostRender(n => n + 1); } } } if (!drag.current.on) return; const dx = e.clientX - drag.current.sx, dy = e.clientY - drag.current.sy; if (Math.hypot(dx, dy) > 4) drag.current.moved = true; // Throttle drag re-renders to ~30fps to prevent lag during fast panning
+      const now = performance.now();
+      if (now - (drag.current as any).lastFrame < 32) return;
+      (drag.current as any).lastFrame = now;
+      setCam(c => ({ ...c, x: cl(drag.current.cx - dx / c.z, 0, Math.max(0, W - vp.w / c.z)), y: cl(drag.current.cy - dy / c.z, 0, Math.max(0, H - vp.h / c.z)) })); };
   const onUp = (e: React.PointerEvent) => {
     const wasMoved = drag.current.moved;
     drag.current.on = false;
@@ -1813,14 +1817,14 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     center(pos.x, pos.y, 0.55);
   }, []); // run once on mount
 
-  const LOD = { crests: cam.z < 1.6, settles: cam.z >= 0.12, art: cam.z >= 0.8, people: cam.z >= 0.95, names: cam.z >= 0.18 };
+  const LOD = useMemo(() => ({ crests: cam.z < 1.6, settles: cam.z >= 0.12, art: cam.z >= 0.8, people: cam.z >= 0.95, names: cam.z >= 0.18 }), [cam.z]);
   const visSettles = useMemo(() => g.settlements.filter(s => visible(s.x, s.y, 900)), [g.settlements, cam, vp]); // eslint-disable-line react-hooks/exhaustive-deps
   const visBaronies = useMemo(() => g.baronies.filter(b => visible(b.x, b.y, 700)), [g.baronies, cam, vp]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* thin border lines between neighbouring baronies */
   // Positions are immutable for a save — key the memo on a position signature so
   // the reference-churn of the baronies array (drift/relations) never re-computes it.
-  const baronyPosKey = g.baronies.map(b => `${b.x},${b.y},${b.region}`).join("|");
+  const baronyPosKey = useMemo(() => g.baronies.map(b => `${b.x},${b.y},${b.region}`).join("|"), [g.baronies]);
   const borders = useMemo(() => {
     const out: { d: string; col: string; w: number }[] = [];
     for (let i = 0; i < g.baronies.length; i++) for (let j = i + 1; j < g.baronies.length; j++) {
@@ -1873,8 +1877,8 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
         <div className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ width: W, height: H, transform: `translate(${-cam.x * cam.z}px,${-cam.y * cam.z}px) scale(${cam.z})` }}>
           <RealmMapCanvas atWar={g.atWar} baronies={g.baronies} roads={g.roads ?? []} settlements={g.settlements} camX={cam.x} camY={cam.y} zoom={cam.z} exploredHexes={g.exploredHexes} season={g.season} />
 
-          {/* thin barony borders */}
-          <MapOverlaySvg borders={borders} roads={roadSegments} />
+          {/* thin barony borders — only rendered when zoomed in enough to see them */}
+          {cam.z > 0.15 && <MapOverlaySvg borders={borders} roads={roadSegments} />}
 
           {g.caravans.map(caravan => {
             const target = baronyById.get(caravan.tid);
@@ -1900,10 +1904,10 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
             <SettlementArt key={`art-${s.id}`} s={s} house={baronyById.get(s.bid)?.house ?? ""} selected={g.selSid === s.id} season={g.season} onPick={pickS} onDbl={onDblCenterS} onHover={onHover} onLeave={onLeave} />
           ))}
 
-          {/* villagers – CSS orbit on the outer streets, never over the building core */}
+          {/* villagers – CSS orbit on the outer streets, never over the building core — capped at 8 per settlement to prevent animation overload */}
           {LOD.people && visSettles.map(s => {
             const cits = citizensBySid.get(s.id) ?? [];
-            return cits.map(c => (
+            return cits.slice(0, 8).map(c => (
               <CitizenOrbit key={c.id} c={c} sx={s.x} sy={s.y} selected={g.selCid === c.id} season={g.season} tunic={OCC_STYLE[c.occ]?.tunic ?? "#666"} onPick={pickC} onHover={onHover} onLeave={onLeave} />
             ));
           })}
