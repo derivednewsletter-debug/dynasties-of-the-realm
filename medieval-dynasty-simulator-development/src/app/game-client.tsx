@@ -819,6 +819,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   const baronyById = useMemo(() => new Map(g.baronies.map(b => [b.id, b])), [g.baronies]);
   const settlementById = useMemo(() => new Map(g.settlements.map(s => [s.id, s])), [g.settlements]);
   const citizenById = useMemo(() => new Map(g.citizens.map(c => [c.id, c])), [g.citizens]);
+  const buildingById = useMemo(() => new Map(g.buildings.map(b => [b.id, b])), [g.buildings]);
   const selB = baronyById.get(g.selBid) ?? g.baronies[0];
   const selS = settlementById.get(g.selSid) ?? home;
   const selC = g.selCid ? citizenById.get(g.selCid) ?? null : null;
@@ -1957,7 +1958,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
             if (!bt) return null;
             const icon = BUILD_ICONS[bt.id] ?? BUILDING_FALLBACK;
             const radius = BUILD_PLACE_RADIUS[bt.id] ?? 70;
-            const sett = g.settlements.find(s => s.id === g.selSid);
+            const sett = settlementById.get(g.selSid);
             const dist = sett ? Math.hypot(gp.x - sett.x, gp.y - sett.y) : 9999;
             const maxDist = sett ? sArt(sett.type, sett.home) * 0.6 : 0;
             const inRange = dist <= maxDist;
@@ -2111,7 +2112,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
               {buildMode && <span className="text-[11px] text-[#8d8674]">Select a building below, then click the map near your settlement to place it.</span>}
             </div>
             {buildMode && placeBuildId && <div className="mb-3 flex items-center gap-2"><span className="text-[11px] text-[#c8a84e]">Placing: <strong>{BUILDS.find(b => b.id === placeBuildId)?.name}</strong></span><button onClick={() => { setPlaceBuildId(null); ghostRef.current = null; }} className="rounded-lg bg-white/6 px-2 py-1 text-[10px] hover:bg-white/12">Cancel</button></div>}
-            <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">{BUILDS.map(t => { const ex = g.buildings.find(b => b.id === t.id); const lv = ex?.level ?? 0; const nxt = lv + 1; const sc = Object.fromEntries(Object.entries(t.cost).map(([k, v]) => [k, Math.ceil((v ?? 0) * nxt)])) as Partial<Res>; const aff = afford(g.res, sc); const isSelected = buildMode && placeBuildId === t.id; return <button key={t.id} onClick={() => { if (buildMode) { setPlaceBuildId(t.id); ghostRef.current = null; } else { build(t); } }} className={`rounded-2xl border p-3 text-left transition ${isSelected ? "border-[#c8a84e] bg-[#c8a84e]/15 ring-1 ring-[#c8a84e]/40" : aff ? "border-white/6 bg-white/3 hover:bg-white/7" : "border-red-400/15 bg-red-950/10 opacity-60"}`}><div className="flex justify-between"><span className="flex items-center gap-1.5 text-[13px] font-semibold"><GameIcon uri={BUILD_ICONS[t.id] ?? BUILDING_FALLBACK} size={16} />{t.name}</span><span className="rounded-full bg-[#c8a84e]/20 px-2 text-[10px] text-[#c8a84e]">Lv {lv}</span></div><p className="mt-1 text-[11px] text-[#bbb5a0]">{t.desc}</p><p className="mt-1 text-[10px] text-emerald-400">Lv {nxt}: {fmtD(t.prod)}</p><p className={`mt-1 text-[10px] ${aff ? "text-[#c8a84e]" : "text-red-400"}`}>Cost: {fmtD(sc)}</p>{buildMode && <p className="mt-1 text-[9px] text-[#8d8674]">Click to select → place on map</p>}</button>; })}</div>
+            <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">{BUILDS.map(t => { const ex = buildingById.get(t.id); const lv = ex?.level ?? 0; const nxt = lv + 1; const sc = Object.fromEntries(Object.entries(t.cost).map(([k, v]) => [k, Math.ceil((v ?? 0) * nxt)])) as Partial<Res>; const aff = afford(g.res, sc); const isSelected = buildMode && placeBuildId === t.id; return <button key={t.id} onClick={() => { if (buildMode) { setPlaceBuildId(t.id); ghostRef.current = null; } else { build(t); } }} className={`rounded-2xl border p-3 text-left transition ${isSelected ? "border-[#c8a84e] bg-[#c8a84e]/15 ring-1 ring-[#c8a84e]/40" : aff ? "border-white/6 bg-white/3 hover:bg-white/7" : "border-red-400/15 bg-red-950/10 opacity-60"}`}><div className="flex justify-between"><span className="flex items-center gap-1.5 text-[13px] font-semibold"><GameIcon uri={BUILD_ICONS[t.id] ?? BUILDING_FALLBACK} size={16} />{t.name}</span><span className="rounded-full bg-[#c8a84e]/20 px-2 text-[10px] text-[#c8a84e]">Lv {lv}</span></div><p className="mt-1 text-[11px] text-[#bbb5a0]">{t.desc}</p><p className="mt-1 text-[10px] text-emerald-400">Lv {nxt}: {fmtD(t.prod)}</p><p className={`mt-1 text-[10px] ${aff ? "text-[#c8a84e]" : "text-red-400"}`}>Cost: {fmtD(sc)}</p>{buildMode && <p className="mt-1 text-[9px] text-[#8d8674]">Click to select → place on map</p>}</button>; })}</div>
             {!buildMode && g.placedBuildings.filter(pb => pb.sid === g.selSid).length > 0 && <div className="mt-4 border-t border-white/8 pt-3"><p className="mb-2 text-[11px] uppercase tracking-wider text-[#8d8674]">Placed Buildings ({g.placedBuildings.filter(pb => pb.sid === g.selSid).length})</p><div className="flex flex-wrap gap-2">{g.placedBuildings.filter(pb => pb.sid === g.selSid).map(pb => <div key={pb.id} className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-[11px]"><GameIcon uri={BUILD_ICONS[pb.buildId] ?? BUILDING_FALLBACK} size={14} /><span className="font-medium">{pb.name}</span><span className="text-[10px] text-[#8d8674]">Lv {pb.level}</span><button onClick={() => removeBuilding(pb.id)} className="ml-1 rounded-full bg-red-900/50 px-1.5 py-0.5 text-[9px] text-red-200 hover:bg-red-800/50">✕</button></div>)}</div></div>}
           </div>}
           {panel === "Training" && <div className="grid gap-3 md:grid-cols-3"><AC t="Muster Militia" b="Drill defenders with food, weapons and silver." bt="Train" fn={trainAct} /><AC t="Tactical Doctrine" b={`Doctrine favours ${g.ruler.path}.`} bt="Study" fn={trainAct} /><AC t="Border Watch" b="Post rangers to track rival movements." bt="Post" fn={trainAct} /></div>}
@@ -2130,13 +2131,13 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
           {panel === "Resources" && <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7">{(Object.entries(g.res) as [RN, number][]).map(([k, v]) => { const liveRate = seasonRateMemo[k] ?? 0; return <div key={k} title={`${liveRate >= 0 ? "+" : ""}${liveRate.toFixed(1)} per season. ${k} is used for buildings, trade, and survival.`} className="rounded-2xl bg-white/3 p-3"><p className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[#8d8674]"><GameIcon uri={RICONS[k]} size={14} />{k}</p><p className="text-xl font-bold tabular-nums">{Math.floor(v)}</p><p className={`text-[10px] tabular-nums ${liveRate >= 0 ? "text-emerald-400" : "text-red-400"}`}>{liveRate >= 0 ? "+" : ""}{liveRate.toFixed(1)}/season</p></div>; })}</div>}
           {panel === "Chronicle" && <div><input value={cSearch} onChange={e => setCSearch(e.target.value)} placeholder="Search the Chronicle…" className="mb-3 w-full rounded-full border border-white/8 bg-white/4 px-4 py-2 text-[12px] outline-none placeholder:text-white/25 focus:border-[#c8a84e]/40" /><div className="mb-2 flex flex-wrap gap-1">{(["all","hope","glory","grief","warning","trade","faith"] as const).map(tone => <button key={tone} onClick={() => setCTone(tone)} className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition ${cTone === tone ? "bg-[#c8a84e] text-[#1a1611]" : "bg-white/6 hover:bg-white/10"}`}>{tone === "all" ? "All" : tone}</button>)}</div><div className="space-y-1.5 text-[12px]">{filtChron.slice(0, 200).map(e => <div key={e.id} className="rounded-xl bg-white/3 px-3 py-2"><span className="mr-2 text-[10px] text-[#8d8674]">Y{e.year} {e.season}</span><strong className="text-[#c8a84e]">{e.title}</strong> <span className="text-[#bbb5a0]">{e.text}</span></div>)}</div></div>}
           {panel === "Realm" && <RealmPanel g={g} search={rSearch} setSearch={setRSearch} pickB={pickB} center={center} />}
-          {panel === "Trade" && <TradePanel g={g} selB={selB} send={sendCaravan} dip={dipAction} />}
+          {panel === "Trade" && <TradePanel g={g} selB={selB} send={sendCaravan} dip={dipAction} baronyById={baronyById} />}
           {panel === "War" && <WarPanel g={g} selB={selB} recruit={recruit} recruitRoyalGuard={recruitRoyalGuard} assignCpt={assignCpt} raid={raid} start={startBattle} dip={dipAction} />}
           {panel === "Settlement" && <SettPanel s={selS} b={selB} g={g} center={center} setPanel={setPanel} enterBuildMode={() => { setBuildMode(true); setPanel("Build"); center(selS.x, selS.y, 1.4); }} />}
           {panel === "Barony" && <BarPanel b={selB} g={g} center={center} pickS={pickS} setPanel={setPanel} />}
-          {panel === "Villager" && selC && <VillPanel c={selC} g={g} center={center} tab={cTab} setTab={setCTab} />}
-          {panel === "Crown" && <CrownPanel g={g} grantTitle={grantTitle} resolveCrisis={resolveCrownCrisis} recruitRoyalGuard={recruitRoyalGuard} />}
-          {panel === "Factions" && <FactionRepPanel g={g} home={home} />}
+          {panel === "Villager" && selC && <VillPanel c={selC} g={g} center={center} tab={cTab} setTab={setCTab} settlementById={settlementById} />}
+          {panel === "Crown" && <CrownPanel g={g} grantTitle={grantTitle} resolveCrisis={resolveCrownCrisis} recruitRoyalGuard={recruitRoyalGuard} baronyById={baronyById} />}
+          {panel === "Factions" && <FactionRepPanel g={g} home={home} baronyById={baronyById} />}
           {panel === "Faith" && <FaithPanel g={g} worship={worship} councilFaith={councilFaith} rulerPath={g.ruler.path} />}
         </div>
       )}
@@ -2224,7 +2225,7 @@ function RealmPanel({ g, search, setSearch, pickB, center }: { g: GS; search: st
   );
 }
 
-function TradePanel({ g, selB, send, dip }: { g: GS; selB: Barony; send: (r: RN) => void; dip: (k: "negotiate" | "alliance" | "bloc" | "peace") => void }) {
+function TradePanel({ g, selB, send, dip, baronyById }: { g: GS; selB: Barony; send: (r: RN) => void; dip: (k: "negotiate" | "alliance" | "bloc" | "peace") => void; baronyById: Map<string, Barony> }) {
   const allied = g.alliances.find(a => a.bid === selB.id);
   return (
     <div className="grid gap-6 lg:grid-cols-[1.25fr_.75fr]">
@@ -2251,11 +2252,11 @@ function TradePanel({ g, selB, send, dip }: { g: GS; selB: Barony; send: (r: RN)
             <button onClick={() => dip("bloc")} className="flex items-center gap-1 rounded-lg bg-emerald-950/50 py-2 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-900/50">Trade bloc · 40<GameIcon uri={RESOURCE_ICONS.silver} size={12} /></button>
           </div>
           {g.atWar.includes(selB.id) && <button onClick={() => dip("peace")} className="mt-1.5 w-full rounded-lg bg-sky-950/50 py-2 text-[11px] font-semibold text-sky-200 hover:bg-sky-900/50">Sue for peace</button>}
-          <div className="mt-2 space-y-0.5 text-[11px] text-[#bbb5a0]">{g.alliances.length === 0 ? <p>No bonds yet.</p> : g.alliances.map(a => <p key={a.bid}>◆ {g.baronies.find(b => b.id === a.bid)?.house} — {a.kind}</p>)}</div>
+          <div className="mt-2 space-y-0.5 text-[11px] text-[#bbb5a0]">{g.alliances.length === 0 ? <p>No bonds yet.</p> : g.alliances.map(a => <p key={a.bid}>◆ {baronyById.get(a.bid)?.house} — {a.kind}</p>)}</div>
         </div>
         <div className="rounded-2xl bg-white/3 p-4">
           <h4 className="text-[11px] font-semibold uppercase tracking-wider text-[#c8a84e]">Caravans on the road</h4>
-          <div className="mt-2 space-y-1 text-[11px] text-[#bbb5a0]">{g.caravans.length === 0 ? <p>None travelling.</p> : g.caravans.map(c => <p key={c.id} className="flex items-center gap-1.5"><GameIcon uri={RICONS[c.resource]} size={14} />{c.amount} → {g.baronies.find(b => b.id === c.tid)?.house} · {Math.ceil(c.days)}d · {c.silver}<GameIcon uri={RESOURCE_ICONS.silver} size={11} /></p>)}</div>
+          <div className="mt-2 space-y-1 text-[11px] text-[#bbb5a0]">{g.caravans.length === 0 ? <p>None travelling.</p> : g.caravans.map(c => <p key={c.id} className="flex items-center gap-1.5"><GameIcon uri={RICONS[c.resource]} size={14} />{c.amount} → {baronyById.get(c.tid)?.house} · {Math.ceil(c.days)}d · {c.silver}<GameIcon uri={RESOURCE_ICONS.silver} size={11} /></p>)}</div>
         </div>
       </div>
     </div>
@@ -2354,9 +2355,9 @@ function BarPanel({ b, g, center, pickS, setPanel }: { b: Barony; g: GS; center:
   );
 }
 
-function VillPanel({ c, g, center, tab, setTab }: { c: Citizen; g: GS; center: (x: number, y: number, z?: number) => void; tab: "Info" | "Skills" | "Memories"; setTab: (t: "Info" | "Skills" | "Memories") => void }) {
+function VillPanel({ c, g, center, tab, setTab, settlementById }: { c: Citizen; g: GS; center: (x: number, y: number, z?: number) => void; tab: "Info" | "Skills" | "Memories"; setTab: (t: "Info" | "Skills" | "Memories") => void; settlementById: Map<string, Settlement> }) {
   const st = OCC_STYLE[c.occ] ?? { tunic: "#666", tool: "•" };
-  const s = g.settlements.find(x => x.id === c.sid);
+  const s = settlementById.get(c.sid);
   return (
     <div className="grid gap-5 md:grid-cols-[250px_1fr]">
       <div>
@@ -2399,10 +2400,10 @@ function BetrothalPanel({ g }: { g: GS }) {
   );
 }
 
-function FactionRepPanel({ g, home }: { g: GS; home: Settlement }) {
+function FactionRepPanel({ g, home, baronyById }: { g: GS; home: Settlement; baronyById: Map<string, Barony> }) {
   const playerHouse = g.baronies[0]?.house ?? "House Sheatsley";
   const reps = (g.factionRep ?? []).filter(fr => {
-    const b = g.baronies.find(b2 => b2.id === fr.bid);
+    const b = baronyById.get(fr.bid);
     return b && b.id !== g.baronies[0]?.id;
   });
   const sorted = [...reps].sort((a, b) => a.trust - b.trust);
@@ -2462,7 +2463,7 @@ function FactionRepPanel({ g, home }: { g: GS; home: Settlement }) {
       </div>
       {/* Recent action log for selected barony */}
       <div className="space-y-2">
-        <p className="text-[10px] uppercase tracking-wider text-[#8d8674]">Recent Actions ({g.baronies.find(b => b.id === g.selBid)?.house ?? "—"})</p>
+        <p className="text-[10px] uppercase tracking-wider text-[#8d8674]">Recent Actions ({baronyById.get(g.selBid)?.house ?? "—"})</p>
         {(() => { const fr = getBaronyRep(g.factionRep ?? [], g.selBid); if (!fr) return <p className="text-[11px] text-[#8d8674]">Select a barony on the map to view its history with {playerHouse}.</p>; return (
           <div className="space-y-1.5">
             {fr.actions.length === 0 && <p className="text-[11px] text-[#8d8674]">No recorded interactions yet.</p>}
@@ -2483,9 +2484,9 @@ function FactionRepPanel({ g, home }: { g: GS; home: Settlement }) {
           <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
             <p>Total grudges: <span className="text-red-400">{reps.reduce((s, fr) => s + fr.genGrudges.filter(g2 => !g2.decayed).length, 0)}</span></p>
             {(() => { const mostFeared = [...reps].sort((a, b) => b.fear - a.fear)[0]; const mostTrusted = [...reps].sort((a, b) => b.trust - a.trust)[0]; const mostGrudged = [...reps].sort((a, b) => b.grudge - a.grudge)[0]; return (<>
-              <p>Most feared: <span className="text-amber-400">{mostFeared ? g.baronies.find(b2 => b2.id === mostFeared.bid)?.house ?? "—" : "—"}</span></p>
-              <p>Most trusted: <span className="text-emerald-400">{mostTrusted ? g.baronies.find(b2 => b2.id === mostTrusted.bid)?.house ?? "—" : "—"}</span></p>
-              <p>Most grudged: <span className="text-red-400">{mostGrudged ? g.baronies.find(b2 => b2.id === mostGrudged.bid)?.house ?? "—" : "—"}</span></p>
+              <p>Most feared: <span className="text-amber-400">{mostFeared ? baronyById.get(mostFeared.bid)?.house ?? "—" : "—"}</span></p>
+              <p>Most trusted: <span className="text-emerald-400">{mostTrusted ? baronyById.get(mostTrusted.bid)?.house ?? "—" : "—"}</span></p>
+              <p>Most grudged: <span className="text-red-400">{mostGrudged ? baronyById.get(mostGrudged.bid)?.house ?? "—" : "—"}</span></p>
             </>); })()}
           </div>
         </div>
@@ -2494,7 +2495,7 @@ function FactionRepPanel({ g, home }: { g: GS; home: Settlement }) {
   );
 }
 
-function CrownPanel({ g, grantTitle, resolveCrisis, recruitRoyalGuard }: { g: GS; grantTitle: (bid: string) => void; resolveCrisis: (idx: number) => void; recruitRoyalGuard: () => void }) {
+function CrownPanel({ g, grantTitle, resolveCrisis, recruitRoyalGuard, baronyById }: { g: GS; grantTitle: (bid: string) => void; resolveCrisis: (idx: number) => void; recruitRoyalGuard: () => void; baronyById: Map<string, Barony> }) {
   const crisis = g.successionCrisis;
   const isCrown = g.rank === "King of the Realm" || g.rank === "Regional Lord";
   if (!isCrown) return <p className="text-[12px] text-[#8d8674]">Rise to Regional Lord or King of the Realm to access the Crown court.</p>;
@@ -2543,7 +2544,7 @@ function CrownPanel({ g, grantTitle, resolveCrisis, recruitRoyalGuard }: { g: GS
         ) : (
           <div className="mt-2 space-y-1.5">
             {g.vassals.map(v => {
-              const barony = g.baronies.find(b => b.id === v.bid);
+              const barony = baronyById.get(v.bid);
               return (
                 <div key={v.bid} className={`flex items-center justify-between rounded-xl px-3 py-2 ${v.loyalty < 25 ? "bg-red-950/20" : "bg-white/3"}`}>
                   <div>
