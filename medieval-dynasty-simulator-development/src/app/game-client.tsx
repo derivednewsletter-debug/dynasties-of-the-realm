@@ -36,6 +36,35 @@ interface SuccessionCrisis { id: string; claimants: { name: string; age: number;
 interface Betrothal { id: string; bid: string; house: string; kind: "proposed" | "accepted" | "rejected"; year: number; season: Season; fromUs: boolean }
 interface Army { militia: number; archers: number; spearmen: number; knights: number; royalGuard: number; captains: string[]; training: number }
 
+type WarTask = "march" | "attack" | "siege" | "raid" | "return" | "guard";
+interface WarArmy {
+  id: string;
+  name: string;          // display name ("Host of Hearthmere" / house)
+  ownerId: string;       // "player" or a barony id
+  color: string;
+  x: number; y: number;  // current world position
+  tx: number; ty: number; // destination world position
+  task: WarTask;
+  targetBid: string | null; // the settlement/barony being marched against
+  comp: Record<UnitType, number>;
+  speedPx: number;        // world px travelled per day (derived from composition)
+  totalDays: number;      // total journey length in days
+  daysLeft: number;       // days remaining on the current order
+  siegeProgress: number;  // 0..100, siege completion
+  morale: number;         // 0..1
+  raiding: boolean;
+}
+interface PendingBattle {
+  armyId: string;
+  kind: "attack" | "siege" | "raid" | "defense";
+  enemyHouse: string;
+  enemyBanner: string;
+  enemyColor: string;
+  enemyMilitary: number;
+  targetBid: string | null;
+  nearHome: boolean;      // true when defending your own seat
+}
+
 interface PlacedBuilding { id: string; buildId: string; name: string; sid: string; x: number; y: number; level: number }
 interface Road { id: string; fromSid: string; toSid: string; level: number; traffic: number; decayed: boolean }
 interface Faction { id: string; name: string; goal: string; members: number; aggression: number; loyalty: number }
@@ -74,6 +103,8 @@ interface GS {
   placedBuildings: PlacedBuilding[];
   exploredHexes: Record<string, number>; // "col,row" -> reveal level (0=hidden, 1=dim, 2=clear)
   faith: Record<string, number>; // deity faith levels: { astra: number, kaelen: number, verna: number, valen: number, morvath: number, sol: number }
+  armies: WarArmy[];
+  pendingBattle: PendingBattle | null;
 }
 
 /* ───────── world constants ───────── */
@@ -356,6 +387,8 @@ function validateSaveState(state: unknown): state is any {
 
 function normalizeState(state: any): GS {
   if (!state.faith) state.faith = { astra: 0, kaelen: 0, verna: 0, valen: 0, morvath: 0, sol: 0 };
+  if (!state.armies) state.armies = [];
+  if (!state.pendingBattle) state.pendingBattle = null;
   return state as GS;
 }
   const chRes = (r: Res, d: Partial<Res>): Res => { const n = { ...r }; for (const k of Object.keys(d) as RN[]) n[k] = Math.max(0, n[k] + (d[k] ?? 0)); return n; };
@@ -372,6 +405,25 @@ const sIcon = (t: SType, h: boolean) => h ? SETTLEMENT_ICONS.home : t === "city"
 const sImg = (t: SType, h: boolean, season: Season) => h ? SETTLEMENT_SVGS.home[season] : t === "city" ? SETTLEMENT_SVGS.city[season] : t === "town" ? SETTLEMENT_SVGS.town[season] : t === "village" ? SETTLEMENT_SVGS.village[season] : SETTLEMENT_SVGS.hamlet[season];
 const sArt = (t: SType, h: boolean) => h ? 760 : t === "city" ? 1150 : t === "town" ? 900 : t === "village" ? 660 : 520;
 const chron = (y: number, s: Season, t: string, tx: string, tone: string): ChronEntry => ({ id: uid("c"), year: y, season: s, title: t, text: tx, tone });
+
+const UNIT_LIST: UnitType[] = ["militia", "archers", "spearmen", "knights", "royalGuard"];
+const ZERO_COMP: Record<UnitType, number> = { militia: 0, archers: 0, spearmen: 0, knights: 0, royalGuard: 0 };
+const armySize = (c: Record<UnitType, number>) => (UNIT_LIST.reduce((a, u) => a + (c[u] ?? 0), 0));
+// rough combat power: guards/k Knights weigh more
+const armyPower = (c: Record<UnitType, number>) => c.militia + c.archers * 1.4 + c.spearmen * 1.5 + c.knights * 2.4 + c.royalGuard * 3;
+// travel speed in world px per day — faster with knights, slower when packed with militia
+const armySpeed = (c: Record<UnitType, number>) => {
+  const n = armySize(c);
+  if (n <= 0) return 90;
+  const weighted = (c.militia * 30 + c.archers * 42 + c.spearmen * 36 + c.knights * 70 + c.royalGuard * 66) / n;
+  return Math.round(cl((weighted + 45) * (1 + Math.max(0, 20 - n) / 60), 35, 150));
+};
+const makeArmy = (ownerId: string, name: string, color: string, comp: Record<UnitType, number>): WarArmy => ({
+  id: uid("wa"), name, ownerId, color,
+  x: -1, y: -1, tx: -1, ty: -1, task: "guard", targetBid: null,
+  comp: { ...ZERO_COMP, ...comp }, speedPx: armySpeed(comp), totalDays: 0, daysLeft: 0,
+  siegeProgress: 0, morale: 0.75, raiding: false,
+});
 
 /* ── fog of war helpers ── */
 const HEX_R = 80;
@@ -641,7 +693,7 @@ function initGame(cd?: CharData): GS {
     selBid: home.bid, selSid: home.id, selCid: null, evt: null,
     toast: { title: "A New Chief Rises", body: "Press ▶ to let time flow across the Realm.", portrait: PORTRAITS.ruler },
     prices: { food: 2, wood: 3, stone: 4, iron: 8, coal: 6, fish: 3, wool: 4, leather: 6, herbs: 5, tools: 10, weapons: 15, medicine: 18, silver: 1 },
-    caravans: [], alliances: [], army: { militia: 8, archers: 3, spearmen: 2, knights: 0, royalGuard: 0, captains: [], training: 12 }, atWar: [],
+    caravans: [], alliances: [], army: { militia: 8, archers: 3, spearmen: 2, knights: 0, royalGuard: 0, captains: [], training: 12 }, atWar: [], armies: [], pendingBattle: null,
     roads: [], factions: [], citizenMemories: [], demotions: 0, battlesFought: 0, lineagesBorn: 0, peakRank: "Hamlet", dynastyExtinct: false,
     betrothals: [],
     vassals: [], successionCrisis: null, civilWarActive: false,
@@ -1424,6 +1476,159 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           };
         });
 
+        // ──── ARMIES & WARFARE ────
+        let armies: WarArmy[] = (prev.armies ?? []).map(a => ({ ...a, comp: { ...a.comp } }));
+        let pendingBattle = prev.pendingBattle ?? null;
+        const homeS = ng.settlements.find(s => s.home);
+        const homeBarony = ng.baronies[0];
+        // deployed hosts eat and drink — a marching army consumes its own stores
+        for (const a of armies) {
+          if (a.ownerId === "player" && a.task !== "guard" && a.task !== "return") {
+            const size = armySize(a.comp);
+            const food = Math.ceil(size * 0.4 * step / DAYS_PER_SEASON);
+            const silver = Math.ceil(size * 0.04 * step / DAYS_PER_SEASON);
+            ng.res = chRes(ng.res, { food: -food, silver: -silver } as Partial<Res>);
+          }
+        }
+        // movement toward the target
+        const arrivedArmies: string[] = [];
+        for (const a of armies) {
+          if (a.task === "guard") continue;
+          if (a.task === "siege" && a.x === a.tx && a.y === a.ty) continue; // already besieging
+          const dist = Math.hypot(a.tx - a.x, a.ty - a.y);
+          if (dist <= 1) { a.x = a.tx; a.y = a.ty; arrivedArmies.push(a.id); continue; }
+          const move = Math.min(a.speedPx * step, dist);
+          a.x += (a.tx - a.x) / dist * move;
+          a.y += (a.ty - a.y) / dist * move;
+          a.daysLeft = Math.max(0, Math.ceil(Math.hypot(a.tx - a.x, a.ty - a.y) / a.speedPx));
+          if (a.x === a.tx && a.y === a.ty) arrivedArmies.push(a.id);
+        }
+        // resolve arrivals / ongoing sieges
+        for (const a of armies) {
+          const tid = a.targetBid;
+          const targetBarony = tid ? ng.baronies.find(b => b.id === tid) : null;
+          const targetSettlement = tid ? ng.settlements.find(s => s.bid === tid) : null;
+          // an army that reached its barony starts a siege (starve) — hold position
+          if (a.task === "siege" && a.x === a.tx && a.y === a.ty && targetBarony) {
+            const pow = armyPower(a.comp);
+            const def = 20 + targetBarony.mil;
+            const gain = step * (2 + pow / 40) * (targetBarony.id === homeBarony?.id ? 0.9 : 1);
+            a.siegeProgress = clamp(a.siegeProgress + gain, 0, 100);
+            if (Math.random() < 0.05 * step) a.morale = clamp(a.morale - 0.01, 0.3, 1);
+            // garrison sallies if it outnumbers the host
+            if (targetBarony.mil > 30 && Math.random() < 0.02 * step) {
+              a.comp = { ...a.comp, militia: Math.max(0, (a.comp.militia ?? 0) - 2), archers: Math.max(0, (a.comp.archers ?? 0) - 1) };
+              ng.chronicle = [chron(year, season, "A Sally!", `${targetBarony.house} defenders sallied against ${a.name}.`, "warning"), ...ng.chronicle];
+            }
+            if (a.siegeProgress >= 100) {
+              if (a.ownerId === "player") {
+                ng.chronicle = [chron(year, season, "The Walls Fall", `${a.name} starved ${targetBarony.house} into surrender.`, "glory"), ...ng.chronicle];
+                ng.atWar = [...new Set([...ng.atWar, tid as string])];
+                ng.res = chRes(ng.res, { silver: 50 + Math.round(targetBarony.eco * 3), food: 30 } as Partial<Res>);
+                ng.prestige += 12;
+              }
+              ng.baronies = ng.baronies.map(b => b.id === tid ? { ...b, mil: clamp01(b.mil - 22), eco: clamp01(b.eco - 14), rel: cl(b.rel - 25, -100, 100) } : b);
+              a.task = "return"; a.targetBid = null;
+              if (homeS) { a.tx = homeS.x; a.ty = homeS.y; }
+              a.daysLeft = Math.max(1, Math.ceil(Math.hypot(a.tx - a.x, a.ty - a.y) / a.speedPx));
+            }
+            continue;
+          }
+          if (!arrivedArmies.includes(a.id)) continue;
+          // ── PLAYER ARMIES: hand the fight to the player ──
+          if (a.ownerId === "player") {
+            if (a.task === "attack" || a.task === "raid") {
+              if (targetBarony && !pendingBattle) {
+                pendingBattle = {
+                  armyId: a.id, kind: a.task === "raid" ? "raid" : "attack",
+                  enemyHouse: targetBarony.house, enemyBanner: targetBarony.banner, enemyColor: targetBarony.color,
+                  enemyMilitary: clamp(Math.round(armyPower(a.comp) * 0.7 + targetBarony.mil * 0.8), 5, 90),
+                  targetBid: tid, nearHome: false,
+                };
+                a.task = "guard"; // hold until the player fights — avoids re-triggering
+              }
+            }
+            continue;
+          }
+          // ── AI army reaches the player's seat → the player must defend ──
+          if ((a.task === "attack" || a.task === "raid") && targetSettlement?.home && !pendingBattle) {
+            const attacker = ng.baronies.find(b => b.id === a.ownerId);
+            pendingBattle = {
+              armyId: a.id, kind: "defense",
+              enemyHouse: a.name, enemyBanner: attacker?.banner ?? "🗡", enemyColor: a.color,
+              enemyMilitary: clamp(Math.round(armyPower(a.comp) * 0.7 + 10), 5, 90),
+              targetBid: a.ownerId, nearHome: true,
+            };
+            a.task = "guard"; // hold — the player must sally out
+            ng.chronicle = [chron(year, season, "The Realm Besieged", `${a.name} camps before Hearthmere.`, "warning"), ...ng.chronicle];
+          } else if (a.task === "return" && targetSettlement?.home) {
+            const returned = a.comp;
+            ng.army = { ...ng.army, militia: ng.army.militia + (returned.militia ?? 0), archers: ng.army.archers + (returned.archers ?? 0), spearmen: ng.army.spearmen + (returned.spearmen ?? 0), knights: ng.army.knights + (returned.knights ?? 0), royalGuard: ng.army.royalGuard + (returned.royalGuard ?? 0) };
+            armies = armies.filter(x => x.id !== a.id);
+          }
+          // ── AI vs AI: auto-resolve on the field ──
+          if (a.task === "attack" && targetBarony) {
+            const pow = armyPower(a.comp);
+            const def = 10 + targetBarony.mil * 1.2;
+            const win = pow / (pow + def);
+            if (Math.random() < win) {
+              ng.baronies = ng.baronies.map(b => b.id === tid ? { ...b, mil: clamp01(b.mil - 18), eco: clamp01(b.eco - 12), rel: cl(b.rel - 12, -100, 100) } : b);
+              ng.chronicle = [chron(year, season, "War in the Realm", `${a.name} broke ${targetBarony.house}.`, "warning"), ...ng.chronicle];
+            } else {
+              ng.chronicle = [chron(year, season, "War in the Realm", `${targetBarony.house} repelled ${a.name}.`, "warning"), ...ng.chronicle];
+              ng.baronies = ng.baronies.map(b => b.id === a.ownerId ? { ...b, mil: clamp01(b.mil - 8) } : b);
+            }
+            armies = armies.filter(x => x.id !== a.id);
+            continue;
+          }
+          if (a.task === "siege" && targetBarony) {
+            // AI sieges a neighbouring barony — auto-resolve when the walls crack
+            const pow = armyPower(a.comp);
+            const def = 20 + targetBarony.mil;
+            a.siegeProgress = clamp(a.siegeProgress + step * (2 + pow / 40), 0, 100);
+            if (a.siegeProgress >= 100) {
+              ng.baronies = ng.baronies.map(b => b.id === tid ? { ...b, mil: clamp01(b.mil - 22), eco: clamp01(b.eco - 12), rel: cl(b.rel - 18, -100, 100) } : b);
+              ng.chronicle = [chron(year, season, "A Citadel Falls", `${a.name} starved ${targetBarony.house} out.`, "warning"), ...ng.chronicle];
+              armies = armies.filter(x => x.id !== a.id);
+            }
+            continue;
+          }
+        }
+        // ── AI raises hosts: besieges the player or warring neighbours ──
+        const aiHosts = armies.filter(a => a.ownerId !== "player").length;
+        if (aiHosts < 3 && Math.random() < 0.01 * step) {
+          // a barony at war with the player marches on Hearthmere; otherwise it harries a rival
+          const hostiles = ng.baronies.filter(b => b.id !== homeBarony?.id && b.mil >= 25 && ng.atWar.includes(b.id));
+          const aggressor = hostiles.length > 0 && Math.random() < 0.6
+            ? hostiles[Math.floor(Math.random() * hostiles.length)]
+            : ng.baronies.find(b => b.id !== homeBarony?.id && b.mil >= 25 && Math.random() < 0.5);
+          if (aggressor) {
+            const warring = hostiles.some(b => b.id === aggressor.id) && Math.random() < 0.5;
+            const target = warring && homeS
+              ? { x: homeS.x, y: homeS.y, id: homeS.bid as string, name: "Hearthmere" }
+              : (() => {
+                  const t = ng.baronies.find(b => b.id !== aggressor.id && b.id !== homeBarony?.id && Math.hypot(b.x - aggressor.x, b.y - aggressor.y) < 2600);
+                  return t ? { x: t.x, y: t.y, id: t.id, name: t.name } : null;
+                })();
+            if (target) {
+              const power = 12 + Math.round(aggressor.mil * 0.7);
+              const split: [UnitType, number][] = [["militia", Math.max(4, Math.round(power * 0.5))], ["archers", Math.max(1, Math.round(power * 0.22))], ["spearmen", Math.max(1, Math.round(power * 0.18))], ["knights", Math.max(0, Math.round(power * 0.1))]];
+              const comp: Record<UnitType, number> = { ...ZERO_COMP };
+              for (const [u, n] of split) comp[u] = n;
+              const army = makeArmy(aggressor.id, `Host of ${aggressor.house}`, aggressor.color, comp);
+              army.x = aggressor.x; army.y = aggressor.y;
+              army.tx = target.x; army.ty = target.y;
+              army.task = "attack";
+              army.targetBid = target.id;
+              army.daysLeft = Math.max(1, Math.ceil(Math.hypot(army.tx - army.x, army.ty - army.y) / army.speedPx));
+              armies.push(army);
+              ng.chronicle = [chron(year, season, "Drums of War", `${aggressor.house} marches on ${target.name}.`, "warning"), ...ng.chronicle];
+            }
+          }
+        }
+        ng.armies = armies;
+        ng.pendingBattle = pendingBattle;
+
         return ng;
       });
     }, 500);
@@ -1634,35 +1839,109 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     setG(p => { if (!afford(p.res, costs[u])) { setNotice("Insufficient supplies."); return p; } setNotice(`Five ${u} joined the levy.`); return { ...p, res: chRes(p.res, Object.fromEntries(Object.entries(costs[u]).map(([k, v]) => [k, -(v ?? 0)])) as Partial<Res>), army: { ...p.army, [u]: p.army[u] + 5, training: clamp01(p.army.training + 1) } }; });
   };
   const assignCpt = () => { setConfirmReset(false); setG(p => { const c = p.citizens.find(c2 => !p.army.captains.includes(c2.name)); if (!c) { setNotice("No free citizens to promote as captain."); return p; } setNotice(`${c.name} raised as captain.`); return { ...p, army: { ...p.army, captains: [...p.army.captains, c.name], training: clamp01(p.army.training + 5) } }; }); };
-  const raid = () => { setConfirmReset(false); setG(p => { const ph = p.baronies[0]?.house ?? "House Sheatsley"; if (selB.id === p.baronies[0]?.id || p.army.militia < 5) { setNotice("Need a foreign target and at least 5 militia."); return p; } const loot = 8 + Math.round(p.army.training / 8);    setNotice(`Raided ${selB.house} for ${loot} silver.`); sound.play("raid");
-    return { ...p, res: chRes(p.res, { silver: loot, food: 4 }), atWar: p.atWar.includes(selB.id) ? p.atWar : [...p.atWar, selB.id], baronies: p.baronies.map(b => b.id === selB.id ? { ...b, rel: cl(b.rel - 18, -100, 100) } : b), rep: { ...p.rep, fear: clamp01(p.rep.fear + 5), trust: clamp01(p.rep.trust - 2) }, factionRep: recordFactionAction(p.factionRep ?? [], selB.id, "raid", 12, p.year, p.season, `${ph.split(" ")[1]} riders raided ${selB.house} for silver.`), chronicle: [chron(p.year, p.season, "Caravan Raided", `${ph.split(" ")[1]} riders raided ${selB.house}.`, "warning"), ...p.chronicle] }; }); };
-
-  const startBattle = (kind: "attack" | "siege") => {
+  // ── WAR: raise a host that marches on the map ──
+  const raiseArmy = (kind: "attack" | "siege" | "raid") => {
     setConfirmReset(false);
     if (selB.id === g.baronies[0]?.id) { setNotice("Select a foreign barony on the map first."); return; }
-    const total = g.army.militia + g.army.archers + g.army.spearmen + g.army.knights;
+    const host = (g.armies ?? []).filter(a => a.ownerId === "player");
+    if (host.length >= 2) { setNotice("You can only field one host at a time — recall the other first."); return; }
+    const total = g.army.militia + g.army.archers + g.army.spearmen + g.army.knights + g.army.royalGuard;
     if (total < 4) { setNotice("Raise more soldiers before marching."); return; }
-    setSpeed(0);
-    setPanel(null);
-    setG(p => ({ ...p, atWar: p.atWar.includes(selB.id) ? p.atWar : [...p.atWar, selB.id] }));
+    const target = g.settlements.find(s => s.bid === selB.id) ?? g.baronies.find(b => b.id === selB.id);
+    const h = g.settlements.find(s => s.home);
+    if (!target || !h) { setNotice("Target not found."); return; }
+    setSpeed(0); setPanel(null); sound.play("click");
+    setG(p => {
+      const comp: Record<UnitType, number> = { militia: p.army.militia, archers: p.army.archers, spearmen: p.army.spearmen, knights: p.army.knights, royalGuard: p.army.royalGuard };
+      const army = makeArmy("player", `Host of ${p.baronies[0]?.house ?? "Hearthmere"}`, "#c8a84e", comp);
+      army.x = h.x; army.y = h.y; army.tx = target.x; army.ty = target.y;
+      army.task = kind; army.targetBid = selB.id;
+      army.daysLeft = Math.max(1, Math.ceil(Math.hypot(target.x - h.x, target.y - h.y) / army.speedPx));
+      setNotice(`${kind === "raid" ? "Riders" : "The host"} march on ${target.name} — ${army.daysLeft} days out.`);
+      const atWar = p.atWar.includes(selB.id) ? p.atWar : [...p.atWar, selB.id];
+      const armyState = { ...p.army, militia: 0, archers: 0, spearmen: 0, knights: 0, royalGuard: 0 };
+      return { ...p, armies: [...(p.armies ?? []), army], army: armyState, atWar };
+    });
+  };
+  const recallArmy = (id: string) => setG(p => {
+    const h = p.settlements.find(s => s.home); if (!h) return p;
+    return { ...p, armies: (p.armies ?? []).map(a => a.id === id ? { ...a, task: "return", targetBid: null, tx: h.x, ty: h.y, daysLeft: Math.max(1, Math.ceil(Math.hypot(h.x - a.x, h.y - a.y) / a.speedPx)) } : a) };
+  });
+  const disbandArmy = (id: string) => setG(p => {
+    const a = (p.armies ?? []).find(x => x.id === id); if (!a) return p;
+    setNotice(`${a.name} disbanded; troops rejoin the levy.`);
+    return { ...p, army: { ...p.army, militia: p.army.militia + (a.comp.militia ?? 0), archers: p.army.archers + (a.comp.archers ?? 0), spearmen: p.army.spearmen + (a.comp.spearmen ?? 0), knights: p.army.knights + (a.comp.knights ?? 0), royalGuard: p.army.royalGuard + (a.comp.royalGuard ?? 0) }, armies: (p.armies ?? []).filter(x => x.id !== id) };
+  });
+  const battleCtxRef = useRef<PendingBattle | null>(null);
+  const assaultSiege = (id: string) => {
+    setConfirmReset(false);
+    const a = g.armies?.find(x => x.id === id); if (!a || a.task !== "siege") return;
+    const t = g.baronies.find(b => b.id === a.targetBid); if (!t) return;
+    setSpeed(0); setPanel(null);
     const solFaith = (g.faith ?? {})["sol"] ?? 0;
     const morale = solFaith >= DOMINION_THRESHOLD ? 0.1 + solFaith / FAITH_MAX * 0.15 : 0;
-    setBattleSetup({ enemyHouse: selB.house, enemyBanner: selB.banner, enemyColor: selB.color, kind, player: { militia: g.army.militia, archers: g.army.archers, spearmen: g.army.spearmen, knights: g.army.knights, royalGuard: g.army.royalGuard }, enemyMilitary: selB.mil, captains: g.army.captains, morale });
+    battleCtxRef.current = { armyId: a.id, kind: "siege", enemyHouse: t.house, enemyBanner: t.banner, enemyColor: t.color, enemyMilitary: clamp(Math.round(t.mil * 1.1), 5, 90), targetBid: t.id, nearHome: false };
+    setBattleSetup({ enemyHouse: t.house, enemyBanner: t.banner, enemyColor: t.color, kind: "siege", player: { ...a.comp }, enemyMilitary: battleCtxRef.current.enemyMilitary, captains: g.army.captains, morale });
   };
+  // A marching host arriving at its target hands the fight to the player
+  useEffect(() => {
+    const pb = g.pendingBattle;
+    if (!pb) return;
+    setSpeed(0); setPanel(null);
+    battleCtxRef.current = pb;
+    const army = (g.armies ?? []).find(a => a.id === pb.armyId);
+    const playerComp = pb.kind === "defense"
+      ? { militia: g.army.militia, archers: g.army.archers, spearmen: g.army.spearmen, knights: g.army.knights, royalGuard: g.army.royalGuard }
+      : (army?.comp ?? { militia: 1, archers: 0, spearmen: 0, knights: 0, royalGuard: 0 });
+    const solFaith = (g.faith ?? {})["sol"] ?? 0;
+    const morale = solFaith >= DOMINION_THRESHOLD ? 0.1 + solFaith / FAITH_MAX * 0.15 : 0;
+    setBattleSetup({ enemyHouse: pb.enemyHouse, enemyBanner: pb.enemyBanner, enemyColor: pb.enemyColor, kind: pb.kind === "siege" ? "siege" : "attack", player: playerComp, enemyMilitary: pb.enemyMilitary, captains: g.army.captains, morale });
+    setG(p => ({ ...p, pendingBattle: null }));
+  }, [g.pendingBattle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const endBattle = useCallback((o: BattleOutcome) => {
     setBattleSetup(null);
+    const ctx = battleCtxRef.current;
+    battleCtxRef.current = null;
     setG(p => {
-      const army: Army = { ...p.army, militia: o.survivors.militia, archers: o.survivors.archers, spearmen: o.survivors.spearmen, knights: o.survivors.knights, royalGuard: o.survivors.royalGuard };
-      if (o.withdrew) { setNotice("Your host withdrew from the field."); return { ...p, army, battlesFought: p.battlesFought + 1, chronicle: [chron(p.year, p.season, "A Withdrawal", `The host retreated from ${selB.name}.`, "grief"), ...p.chronicle] }; }
+      const target = ctx ? p.baronies.find(b => b.id === ctx.targetBid) : null;
+      const targetName = target?.name ?? "the enemy";
+      const playerHouse = p.baronies[0]?.house ?? "House Sheatsley";
+      const survivors: Record<UnitType, number> = { ...o.survivors };
+      if (o.withdrew) {
+        setNotice("Your forces withdrew from the field.");
+        if (ctx?.nearHome) {
+          const origin = ctx.targetBid ? p.baronies.find(b => b.id === ctx.targetBid) : null;
+          return { ...p, armies: (p.armies ?? []).map(a => a.id === ctx.armyId ? { ...a, task: "return" as WarTask, targetBid: null, tx: origin?.x ?? a.x, ty: origin?.y ?? a.y, daysLeft: Math.max(1, Math.ceil(Math.hypot((origin?.x ?? a.x) - a.x, (origin?.y ?? a.y) - a.y) / a.speedPx)) } : a), army: { ...p.army, militia: survivors.militia, archers: survivors.archers, spearmen: survivors.spearmen, knights: survivors.knights, royalGuard: survivors.royalGuard }, battlesFought: p.battlesFought + 1, chronicle: [chron(p.year, p.season, "The Host Withdraws", `The garrison fell back before ${ctx?.enemyHouse ?? "the invaders"}.`, "grief"), ...p.chronicle] };
+        }
+        const armies = (p.armies ?? []).map(a => a.id === ctx?.armyId ? { ...a, comp: { ...survivors }, task: "return" as WarTask, targetBid: null, tx: (p.settlements.find(s => s.home)?.x ?? 0), ty: (p.settlements.find(s => s.home)?.y ?? 0) } : a);
+        return { ...p, armies, army: ctx?.nearHome ? { ...p.army, militia: survivors.militia, archers: survivors.archers, spearmen: survivors.spearmen, knights: survivors.knights, royalGuard: survivors.royalGuard } : p.army, battlesFought: p.battlesFought + 1, chronicle: [chron(p.year, p.season, "A Withdrawal", `The host retreated from ${targetName}.`, "grief"), ...p.chronicle] };
+      }
       if (o.victory) {
-        setNotice(`Victory over ${selB.house}!`); sound.play("battle");
-        return { ...p, army, prestige: p.prestige + 10, battlesFought: p.battlesFought + 1, res: chRes(p.res, { silver: 40, food: 12 }), rep: { ...p.rep, fear: clamp01(p.rep.fear + 8), respect: clamp01(p.rep.respect + 6) }, baronies: p.baronies.map(b => b.id === selB.id ? { ...b, mil: clamp01(b.mil - 25), rel: cl(b.rel - 20, -100, 100) } : b), factionRep: recordFactionAction(p.factionRep ?? [], selB.id, "war_victory", 15, p.year, p.season, `${selB.house} was defeated in open battle.`), chronicle: [chron(p.year, p.season, "A Battle Won", `${selB.house} was broken in the field. ${o.enemyKilled} enemies fell.`, "glory"), ...p.chronicle] };
+        setNotice(`Victory over ${ctx?.enemyHouse ?? "the enemy"}!`); sound.play("battle");
+        if (ctx?.kind === "raid") {
+          const loot = 25 + Math.round(p.army.training / 6) + Math.round((ctx.enemyMilitary ?? 20) * 0.4);
+          return { ...p, res: chRes(p.res, { silver: loot, food: 10 }), prestige: p.prestige + 5, battlesFought: p.battlesFought + 1, rep: { ...p.rep, fear: clamp01(p.rep.fear + 10), trust: clamp01(p.rep.trust - 4) }, baronies: p.baronies.map(b => b.id === ctx?.targetBid ? { ...b, mil: clamp01(b.mil - 8), rel: cl(b.rel - 25, -100, 100) } : b), armies: (p.armies ?? []).map(a => a.id === ctx?.armyId ? { ...a, comp: { ...survivors }, task: "return" as WarTask, targetBid: null, tx: (p.settlements.find(s => s.home)?.x ?? 0), ty: (p.settlements.find(s => s.home)?.y ?? 0) } : a), factionRep: recordFactionAction(p.factionRep ?? [], ctx?.targetBid ?? "", "raid", 12, p.year, p.season, `${playerHouse} raided ${targetName}.`), chronicle: [chron(p.year, p.season, "A Raid's Spoils", `${playerHouse} raiders returned with ${loot} silver.`, "glory"), ...p.chronicle] };
+        }
+        if (ctx?.kind === "siege") {
+          const loot = 50 + Math.round((ctx.enemyMilitary ?? 30) * 0.5);
+          return { ...p, res: chRes(p.res, { silver: loot, food: 15 }), prestige: p.prestige + 14, battlesFought: p.battlesFought + 1, rep: { ...p.rep, fear: clamp01(p.rep.fear + 12), respect: clamp01(p.rep.respect + 8) }, baronies: p.baronies.map(b => b.id === ctx?.targetBid ? { ...b, mil: clamp01(b.mil - 30), eco: clamp01(b.eco - 12), rel: cl(b.rel - 25, -100, 100) } : b), armies: (p.armies ?? []).map(a => a.id === ctx?.armyId ? { ...a, comp: { ...survivors }, task: "return" as WarTask, targetBid: null, tx: (p.settlements.find(s => s.home)?.x ?? 0), ty: (p.settlements.find(s => s.home)?.y ?? 0) } : a), factionRep: recordFactionAction(p.factionRep ?? [], ctx?.targetBid ?? "", "war_victory", 15, p.year, p.season, `${targetName} fell to the siege.`), chronicle: [chron(p.year, p.season, "A Siege Lifted", `${targetName} fell before ${playerHouse}. ${o.enemyKilled} defenders fell.`, "glory"), ...p.chronicle] };
+        }
+        if (ctx?.kind === "defense") {
+          return { ...p, prestige: p.prestige + 9, battlesFought: p.battlesFought + 1, army: { ...p.army, militia: survivors.militia, archers: survivors.archers, spearmen: survivors.spearmen, knights: survivors.knights, royalGuard: survivors.royalGuard }, rep: { ...p.rep, fear: clamp01(p.rep.fear + 9), trust: clamp01(p.rep.trust + 3) }, baronies: ctx?.targetBid ? p.baronies.map(b => b.id === ctx.targetBid ? { ...b, mil: clamp01(b.mil - 18), rel: cl(b.rel - 15, -100, 100) } : b) : p.baronies, armies: (p.armies ?? []).filter(a => a.id !== ctx?.armyId), factionRep: ctx?.targetBid ? recordFactionAction(p.factionRep ?? [], ctx.targetBid, "war_victory", 12, p.year, p.season, `${playerHouse} threw back the invaders.`) : p.factionRep, chronicle: [chron(p.year, p.season, "The Invaders Broken", `${playerHouse} defended Hearthmere against ${ctx?.enemyHouse ?? "the invaders"}.`, "glory"), ...p.chronicle] };
+        }
+        // open-field attack victory
+        return { ...p, prestige: p.prestige + 10, battlesFought: p.battlesFought + 1, res: chRes(p.res, { silver: 40, food: 12 }), rep: { ...p.rep, fear: clamp01(p.rep.fear + 8), respect: clamp01(p.rep.respect + 6) }, baronies: p.baronies.map(b => b.id === ctx?.targetBid ? { ...b, mil: clamp01(b.mil - 25), rel: cl(b.rel - 20, -100, 100) } : b), armies: (p.armies ?? []).map(a => a.id === ctx?.armyId ? { ...a, comp: { ...survivors }, task: "return" as WarTask, targetBid: null, tx: (p.settlements.find(s => s.home)?.x ?? 0), ty: (p.settlements.find(s => s.home)?.y ?? 0) } : a), factionRep: recordFactionAction(p.factionRep ?? [], ctx?.targetBid ?? "", "war_victory", 15, p.year, p.season, `${ctx?.enemyHouse ?? "The enemy"} was defeated in open battle.`), chronicle: [chron(p.year, p.season, "A Battle Won", `${ctx?.enemyHouse ?? "The enemy"} was broken in the field. ${o.enemyKilled} enemies fell.`, "glory"), ...p.chronicle] };
       }
       setNotice("Your army was broken."); sound.play("death");
-      return { ...p, army, prestige: Math.max(0, p.prestige - 6), battlesFought: p.battlesFought + 1, rep: { ...p.rep, respect: clamp01(p.rep.respect - 5) }, factionRep: recordFactionAction(p.factionRep ?? [], selB.id, "war_defeat", 8, p.year, p.season, `${selB.house} shattered the host of ${p.baronies[0]?.house ?? "House Sheatsley"}.`), chronicle: [chron(p.year, p.season, "A Battle Lost", `The host was shattered before ${selB.name}.`, "grief"), ...p.chronicle] };
+      if (ctx?.kind === "defense") {
+        const stolen = Math.min(p.res.silver, 20 + Math.round((ctx.enemyMilitary ?? 20) * 0.3));
+        return { ...p, army: { ...p.army, militia: survivors.militia, archers: survivors.archers, spearmen: survivors.spearmen, knights: survivors.knights, royalGuard: survivors.royalGuard }, res: chRes(p.res, { silver: -stolen, food: -15 }), prestige: Math.max(0, p.prestige - 8), battlesFought: p.battlesFought + 1, rep: { ...p.rep, fear: clamp01(p.rep.fear + 5), respect: clamp01(p.rep.respect - 5) }, armies: (p.armies ?? []).filter(a => a.id !== ctx?.armyId), factionRep: ctx?.targetBid ? recordFactionAction(p.factionRep ?? [], ctx.targetBid, "war_defeat", 8, p.year, p.season, `${ctx.enemyHouse} plundered Hearthmere.`) : p.factionRep, chronicle: [chron(p.year, p.season, "Hearthmere Plundered", `${ctx?.enemyHouse ?? "Invaders"} sacked the seat of ${playerHouse}.`, "grief"), ...p.chronicle] };
+      }
+      const armies = (p.armies ?? []).map(a => a.id === ctx?.armyId ? { ...a, comp: { ...survivors }, task: "return" as WarTask, targetBid: null, tx: (p.settlements.find(s => s.home)?.x ?? 0), ty: (p.settlements.find(s => s.home)?.y ?? 0) } : a);
+      return { ...p, armies, prestige: Math.max(0, p.prestige - 6), battlesFought: p.battlesFought + 1, rep: { ...p.rep, respect: clamp01(p.rep.respect - 5) }, factionRep: recordFactionAction(p.factionRep ?? [], ctx?.targetBid ?? "", "war_defeat", 8, p.year, p.season, `${ctx?.enemyHouse ?? "The enemy"} shattered the host of ${playerHouse}.`), chronicle: [chron(p.year, p.season, "A Battle Lost", `The host was shattered before ${targetName}.`, "grief"), ...p.chronicle] };
     });
-  }, [selB]);
+  }, []);
 
   /* ── Crown actions ── */
   const grantTitle = (bid: string) => setG(p => {
@@ -1910,6 +2189,22 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
             );
           })}
 
+          {/* marching armies */}
+          {(g.armies ?? []).filter(a => visible(a.x, a.y, 200)).map(a => {
+            const mine = a.ownerId === "player";
+            return (
+              <div key={a.id} className="pointer-events-none absolute" style={{ left: a.x, top: a.y, zIndex: 23 }}>
+                <div className="-translate-x-1/2 -translate-y-1/2">
+                  <div className={`flex h-9 w-9 items-center justify-center rounded-full shadow-lg ring-2 ${mine ? "bg-[#c8a84e] ring-[#c8a84e]/70" : "bg-red-950 ring-red-400/50"}`} style={{ boxShadow: mine ? "0 0 22px rgba(200,168,78,0.7)" : "0 0 22px rgba(220,38,38,0.5)" }}>
+                    <GameIcon uri={mine ? UNIT_ICONS.knights : ACTION_ICONS.raid} size={20} tile={false} />
+                  </div>
+                  <div className="mt-0.5 -translate-x-1/2 whitespace-nowrap rounded bg-black/75 px-1.5 py-0.5 text-[9px] font-semibold text-[#eee4d0]">{armySize(a.comp)} <span className="opacity-70">men</span></div>
+                  {a.task !== "guard" && <div className="mt-0.5 -translate-x-1/2 whitespace-nowrap rounded bg-black/60 px-1.5 py-0.5 text-[8px] capitalize text-[#bbb5a0]">{a.task}{a.task === "siege" ? ` ${Math.round(a.siegeProgress)}%` : a.daysLeft > 0 ? ` · ${a.daysLeft}d` : ""}</div>}
+                </div>
+              </div>
+            );
+          })}
+
           {/* region names */}
           {(Object.keys(RC) as Region[]).map(r => (
             <div key={r} className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 whitespace-nowrap font-semibold uppercase" style={{ left: RC[r].x, top: RC[r].y - 1150, color: `${RCOL[r]}66`, fontSize: 120, letterSpacing: "0.4em", textShadow: "0 6px 30px rgba(0,0,0,.8)" }}>{r}</div>
@@ -2132,7 +2427,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
           {panel === "Chronicle" && <div><input value={cSearch} onChange={e => setCSearch(e.target.value)} placeholder="Search the Chronicle…" className="mb-3 w-full rounded-full border border-white/8 bg-white/4 px-4 py-2 text-[12px] outline-none placeholder:text-white/25 focus:border-[#c8a84e]/40" /><div className="mb-2 flex flex-wrap gap-1">{(["all","hope","glory","grief","warning","trade","faith"] as const).map(tone => <button key={tone} onClick={() => setCTone(tone)} className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition ${cTone === tone ? "bg-[#c8a84e] text-[#1a1611]" : "bg-white/6 hover:bg-white/10"}`}>{tone === "all" ? "All" : tone}</button>)}</div><div className="space-y-1.5 text-[12px]">{filtChron.slice(0, 200).map(e => <div key={e.id} className="rounded-xl bg-white/3 px-3 py-2"><span className="mr-2 text-[10px] text-[#8d8674]">Y{e.year} {e.season}</span><strong className="text-[#c8a84e]">{e.title}</strong> <span className="text-[#bbb5a0]">{e.text}</span></div>)}</div></div>}
           {panel === "Realm" && <RealmPanel g={g} search={rSearch} setSearch={setRSearch} pickB={pickB} center={center} />}
           {panel === "Trade" && <TradePanel g={g} selB={selB} send={sendCaravan} dip={dipAction} baronyById={baronyById} />}
-          {panel === "War" && <WarPanel g={g} selB={selB} recruit={recruit} recruitRoyalGuard={recruitRoyalGuard} assignCpt={assignCpt} raid={raid} start={startBattle} dip={dipAction} />}
+          {panel === "War" && <WarPanel g={g} selB={selB} recruit={recruit} recruitRoyalGuard={recruitRoyalGuard} assignCpt={assignCpt} raise={raiseArmy} recall={recallArmy} disband={disbandArmy} assault={assaultSiege} dip={dipAction} />}
           {panel === "Settlement" && <SettPanel s={selS} b={selB} g={g} center={center} setPanel={setPanel} enterBuildMode={() => { setBuildMode(true); setPanel("Build"); center(selS.x, selS.y, 1.4); }} />}
           {panel === "Barony" && <BarPanel b={selB} g={g} center={center} pickS={pickS} setPanel={setPanel} />}
           {panel === "Villager" && selC && <VillPanel c={selC} g={g} center={center} tab={cTab} setTab={setCTab} settlementById={settlementById} />}
@@ -2263,7 +2558,9 @@ function TradePanel({ g, selB, send, dip, baronyById }: { g: GS; selB: Barony; s
   );
 }
 
-function WarPanel({ g, selB, recruit, recruitRoyalGuard, assignCpt, raid, start, dip }: { g: GS; selB: Barony; recruit: (u: UnitType) => void; recruitRoyalGuard: () => void; assignCpt: () => void; raid: () => void; start: (k: "attack" | "siege") => void; dip: (k: "peace") => void }) {
+function WarPanel({ g, selB, recruit, recruitRoyalGuard, assignCpt, raise, recall, disband, assault, dip }: { g: GS; selB: Barony; recruit: (u: UnitType) => void; recruitRoyalGuard: () => void; assignCpt: () => void; raise: (k: "attack" | "siege" | "raid") => void; recall: (id: string) => void; disband: (id: string) => void; assault: (id: string) => void; dip: (k: "peace") => void }) {
+  const myHosts = (g.armies ?? []).filter(a => a.ownerId === "player");
+  const foes = (g.armies ?? []).filter(a => a.ownerId !== "player");
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <div>
@@ -2283,17 +2580,41 @@ function WarPanel({ g, selB, recruit, recruitRoyalGuard, assignCpt, raid, start,
           <button onClick={assignCpt} className="mt-2 rounded-lg bg-white/6 px-3 py-1.5 text-[11px] font-semibold hover:bg-white/12">Appoint captain (+5% damage)</button>
           <p className="mt-1 text-[10px] text-[#bbb5a0]">Captains: {g.army.captains.join(", ") || "none"}</p>
         </div>
+        {myHosts.length > 0 && (
+          <div className="mt-4 space-y-2">
+            <p className="text-[10px] uppercase tracking-wider text-[#c8a84e]">Your Armies</p>
+            {myHosts.map(a => (
+              <div key={a.id} className="rounded-2xl bg-red-950/15 p-3 ring-1 ring-red-400/10">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="flex items-center gap-2 text-[12px] font-bold"><GameIcon uri={UNIT_ICONS.knights} size={16} tile={false} />{a.name}</span>
+                  <span className="text-[10px] capitalize text-[#bbb5a0]">{a.task} · {armySize(a.comp)} men</span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {a.task === "siege" && <button onClick={() => assault(a.id)} className="rounded-lg bg-red-700/80 px-3 py-1.5 text-[10px] font-semibold hover:bg-red-600/80">Assault · {Math.round(a.siegeProgress)}%</button>}
+                  <button onClick={() => recall(a.id)} className="rounded-lg bg-white/6 px-3 py-1.5 text-[10px] font-semibold hover:bg-white/12">Recall</button>
+                  <button onClick={() => disband(a.id)} className="rounded-lg bg-white/6 px-3 py-1.5 text-[10px] font-semibold hover:bg-white/12">Disband</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       <div className="rounded-3xl border border-red-400/12 bg-red-950/12 p-5">
         <p className="text-[10px] uppercase tracking-wider text-red-300">Target</p>
         <div className="mt-1 flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-full" style={{ background: selB.color }}><GameIcon uri={BANNER_URI[selB.banner] ?? BANNER_FALLBACK} size={20} tile={false} /></span><div><h3 className="text-[15px] font-bold">{selB.house}</h3><p className="text-[11px] text-[#bbb5a0]">{selB.name} · military {selB.mil} · relations {selB.rel}</p></div></div>
-        <p className="mt-3 text-[11px] text-[#8d8674]">Battles open a live tactical field where you command each squad in real time.</p>
+        <p className="mt-3 text-[11px] text-[#8d8674]">Raise your levy — they march across the map, then you command each squad on the field.</p>
         <div className="mt-4 grid gap-2">
-          <button onClick={raid} className="rounded-xl bg-amber-800/60 py-2.5 text-[12px] font-semibold text-amber-100 hover:bg-amber-700/60">Raid their caravans</button>
-          <button onClick={() => start("attack")} className="flex items-center justify-center gap-2 rounded-xl bg-red-800/85 py-2.5 text-[12px] font-semibold hover:bg-red-700/85"><GameIcon uri={ACTION_ICONS.raid} size={14} tile={false} />March to battle</button>
-          <button onClick={() => start("siege")} className="flex items-center justify-center gap-2 rounded-xl bg-white/5 py-2.5 text-[12px] font-semibold ring-1 ring-red-400/20 hover:bg-red-950/40"><GameIcon uri={SETTLEMENT_ICONS.city} size={14} tile={false} />Lay siege</button>
+          <button onClick={() => raise("raid")} className="rounded-xl bg-amber-800/60 py-2.5 text-[12px] font-semibold text-amber-100 hover:bg-amber-700/60">Raid their lands</button>
+          <button onClick={() => raise("attack")} className="flex items-center justify-center gap-2 rounded-xl bg-red-800/85 py-2.5 text-[12px] font-semibold hover:bg-red-700/85"><GameIcon uri={ACTION_ICONS.raid} size={14} tile={false} />March to battle</button>
+          <button onClick={() => raise("siege")} className="flex items-center justify-center gap-2 rounded-xl bg-white/5 py-2.5 text-[12px] font-semibold ring-1 ring-red-400/20 hover:bg-red-950/40"><GameIcon uri={SETTLEMENT_ICONS.city} size={14} tile={false} />Lay siege</button>
           {g.atWar.includes(selB.id) && <button onClick={() => dip("peace")} className="rounded-xl bg-sky-950/50 py-2.5 text-[12px] font-semibold text-sky-200 hover:bg-sky-900/50">Sue for peace</button>}
         </div>
+        {foes.length > 0 && (
+          <div className="mt-4 border-t border-white/8 pt-3">
+            <p className="mb-1 text-[10px] uppercase tracking-wider text-red-300">Hostile Armies ({foes.length})</p>
+            {foes.map(a => <div key={a.id} className="flex items-center justify-between py-1 text-[11px]"><span className="flex items-center gap-2"><GameIcon uri={ACTION_ICONS.raid} size={14} tile={false} /><span className="text-amber-200">{a.name}</span></span><span className="capitalize text-[#bbb5a0]">{a.task}{a.daysLeft > 0 ? ` · ${a.daysLeft}d` : ""}</span></div>)}
+          </div>
+        )}
       </div>
     </div>
   );
