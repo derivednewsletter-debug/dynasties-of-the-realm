@@ -931,6 +931,9 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
     const id = setInterval(() => {
       const now = performance.now();
       if (now - lastTickRef.current < 16) return; // Throttle to ~60fps
+      // Skip React re-render during active pan/zoom — camera transform is handled
+      // via direct DOM manipulation, so no re-render needed for visual smoothness
+      if (drag.current.on) { lastTickRef.current = now; return; }
       lastTickRef.current = now;
       
       setG(prev => {
