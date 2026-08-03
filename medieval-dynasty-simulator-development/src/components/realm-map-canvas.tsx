@@ -332,32 +332,68 @@ function baronyCells(baronies: Barony[]): VoronoiResult {
   return voronoiCache.result;
 }
 
+function cellCentroid(poly: [number, number][]): [number, number] {
+  let ax = 0, ay = 0;
+  for (const [x, y] of poly) { ax += x; ay += y; }
+  const n = poly.length || 1;
+  return [ax / n, ay / n];
+}
+
+// Radius from a cell's centroid to its farthest vertex — used to feather a
+// radial realm tint to (near) zero at the cell edge, so neighbouring realms
+// blend into regions instead of reading as hard-edged hexagons.
+function cellRadius(cx: number, cy: number, poly: [number, number][]): number {
+  let r = 0;
+  for (const [x, y] of poly) { const d = Math.hypot(x - cx, y - cy); if (d > r) r = d; }
+  return r;
+}
+
 function drawRealmTerritories(ctx: CanvasRenderingContext2D, baronies: Barony[]) {
   const { cells, borders } = baronyCells(baronies);
 
-  // Fills — non-player realms first, the player's seat last so it reads on top.
+  // Feathered radial tints, non-player realms first and the player's seat last.
+  // Each wash is clipped to its own Voronoi cell and fades to transparent at the
+  // edge, so neighbouring realms blend softly — CK3-style regional colour washes.
   for (let bi = 1; bi < baronies.length; bi++) {
     const b = baronies[bi];
     const poly = cells[bi];
     if (!poly || poly.length < 3) continue;
     const tri = baronyColor(b.color, b.id + b.house);
+    const [cx, cy] = cellCentroid(poly);
+    const rr = cellRadius(cx, cy, poly);
     tracePoly(ctx, poly);
-    ctx.fillStyle = triAlpha(tri, 0.55);
-    ctx.fill();
+    ctx.save();
+    ctx.clip();
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, rr);
+    grad.addColorStop(0, triAlpha(tri, 0.42));
+    grad.addColorStop(0.55, triAlpha(tri, 0.16));
+    grad.addColorStop(1, triAlpha(tri, 0));
+    ctx.fillStyle = grad;
+    ctx.fillRect(cx - rr, cy - rr, rr * 2, rr * 2);
+    ctx.restore();
   }
   const p = baronies[0];
   if (p && cells[0] && cells[0].length >= 3) {
     const tri = baronyColor(p.color, p.id + p.house);
+    const [cx, cy] = cellCentroid(cells[0]);
+    const rr = cellRadius(cx, cy, cells[0]);
     tracePoly(ctx, cells[0]);
-    ctx.fillStyle = triAlpha(tri, 0.65);
-    ctx.fill();
+    ctx.save();
+    ctx.clip();
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, rr);
+    grad.addColorStop(0, triAlpha(tri, 0.58));
+    grad.addColorStop(0.55, triAlpha(tri, 0.24));
+    grad.addColorStop(1, triAlpha(tri, 0));
+    ctx.fillStyle = grad;
+    ctx.fillRect(cx - rr, cy - rr, rr * 2, rr * 2);
+    ctx.restore();
   }
 
-  // Soft ink underlay on every cell edge — hides fill seams and gives each
-  // realm a defined outline where it faces open land.
+  // Soft ink underlay on every cell edge — hides seams and grounds each realm
+  // where it faces open land, without a hard polygon band.
   ctx.save();
   ctx.lineJoin = "round";
-  ctx.strokeStyle = "rgba(24,18,10,0.22)";
+  ctx.strokeStyle = "rgba(24,18,10,0.14)";
   ctx.lineWidth = 3;
   for (let bi = 0; bi < cells.length; bi++) {
     const poly = cells[bi];
@@ -367,29 +403,30 @@ function drawRealmTerritories(ctx: CanvasRenderingContext2D, baronies: Barony[])
   }
   ctx.restore();
 
-  // Crisp shared borders — one hand-drawn ink line per adjacent pair (CK3-style).
+  // Feathered shared borders — one soft ink line per adjacent pair, lightened so
+  // realms read as gently-divided regions rather than crisp cut boundaries.
   ctx.save();
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   for (const bp of borders) {
     traceOpen(ctx, bp);
-    ctx.strokeStyle = "rgba(22,16,9,0.6)";
+    ctx.strokeStyle = "rgba(22,16,9,0.32)";
     ctx.lineWidth = 3.5;
     ctx.stroke();
     traceOpen(ctx, bp);
-    ctx.strokeStyle = "rgba(150,122,70,0.55)";
+    ctx.strokeStyle = "rgba(150,122,70,0.32)";
     ctx.lineWidth = 1.4;
     ctx.stroke();
   }
   ctx.restore();
 
-  // The player's realm gets a gold ring on top.
+  // The player's realm gets a soft gold ring on top.
   if (p && cells[0] && cells[0].length >= 3) {
     ctx.save();
-    ctx.shadowColor = "rgba(244, 214, 120, 0.55)";
+    ctx.shadowColor = "rgba(244, 214, 120, 0.5)";
     ctx.shadowBlur = 22;
     tracePoly(ctx, cells[0]);
-    ctx.strokeStyle = "rgba(244, 214, 120, 0.95)";
+    ctx.strokeStyle = "rgba(244, 214, 120, 0.85)";
     ctx.lineWidth = 3.5;
     ctx.stroke();
     ctx.restore();
@@ -724,6 +761,10 @@ interface RealmMapCanvasProps {
   camX: number;
   camY: number;
   zoom: number;
+  /** Live camera ref ({x,y,z} in world units / zoom), read at 60fps by the rAF
+   *  loop so the viewport canvas tracks the same camera the DOM markers use.
+   *  When provided it overrides camX/camY/zoom for the dynamic layer. */
+  camRef?: { current: { x: number; y: number; z: number } };
   /** If true, renders only the static base layer (no war animation, no hex grid culling) */
   staticMode?: boolean;
   /** Fog of war: hex key -> reveal level (0=hidden, 1=dim, 2=clear) */
@@ -845,7 +886,7 @@ function drawFogOfWar(ctx: CanvasRenderingContext2D, exploredHexes: Record<strin
   }
 }
 
-export const RealmMapCanvas = memo(function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes, season }: RealmMapCanvasProps) {
+export const RealmMapCanvas = memo(function RealmMapCanvas({ atWar, baronies, roads, settlements, camX, camY, zoom, camRef, staticMode, exploredHexes, season }: RealmMapCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef(0);
   const stateRef = useRef({ atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes, season });
@@ -864,8 +905,8 @@ export const RealmMapCanvas = memo(function RealmMapCanvas({ atWar, baronies, ro
   const staticCacheRef = useRef<{ key: string; canvas: HTMLCanvasElement | null; ctx: CanvasRenderingContext2D | null; w: number; h: number }>({ key: "", canvas: null, ctx: null, w: 0, h: 0 });
 
   // Cheap: camera + viewport only. The expensive world part comes from worldSigRef.
-  const staticKey = useCallback((s: typeof stateRef.current, vw: number, vh: number, dpr: number) => {
-    let k = `${Math.round(s.camX / 120)}|${Math.round(s.camY / 138.56)}|${s.zoom.toFixed(3)}|${Math.round(vw)}x${Math.round(vh)}@${dpr}`;
+  const staticKey = useCallback((camX: number, camY: number, z: number, vw: number, vh: number, dpr: number) => {
+    let k = `${Math.round(camX / 120)}|${Math.round(camY / 138.56)}|${z.toFixed(3)}|${Math.round(vw)}x${Math.round(vh)}@${dpr}`;
     k += "|" + worldSigRef.current;
     return k;
   }, []);
@@ -903,7 +944,7 @@ export const RealmMapCanvas = memo(function RealmMapCanvas({ atWar, baronies, ro
 
     if (s.staticMode) {
       // Static mode: scale entire world into minimap canvas
-      const key = staticKey(s, rect.width, rect.height, dpr);
+      const key = staticKey(0, 0, 1, rect.width, rect.height, dpr);
       let cache = staticCacheRef.current;
       const cw = Math.round(rect.width * dpr), ch = Math.round(rect.height * dpr);
       const fresh = cache.canvas && cache.key === key && cache.w === cw && cache.h === ch;
@@ -955,13 +996,20 @@ export const RealmMapCanvas = memo(function RealmMapCanvas({ atWar, baronies, ro
       drawWarZones(ctx, s.atWar, s.baronies);
       ctx.restore();
     } else {
-      // Dynamic mode: camera-transformed
-      const vw = rect.width / s.zoom;
-      const vh = rect.height / s.zoom;
+      // Dynamic mode: camera-transformed.
+      // Prefer the live camera ref (read at 60fps) so the viewport canvas tracks the
+      // same camera the DOM markers use; fall back to props when no ref is provided.
+      const live = camRef?.current;
+      const camX = live?.x ?? s.camX;
+      const camY = live?.y ?? s.camY;
+      const zoom = live?.z ?? s.zoom;
+
+      const vw = rect.width / zoom;
+      const vh = rect.height / zoom;
 
       // Static layer (hex grid, fog, borders, roads, compass, banner) is cached per
       // viewport + world-signature so idle frames skip the expensive path/fill work.
-      const key = staticKey(s, vw, vh, dpr);
+      const key = staticKey(camX, camY, zoom, vw, vh, dpr);
       let cache = staticCacheRef.current;
       const cw = Math.round(rect.width * dpr), ch = Math.round(rect.height * dpr);
       const fresh = cache.canvas && cache.key === key && cache.w === cw && cache.h === ch;
@@ -979,8 +1027,8 @@ export const RealmMapCanvas = memo(function RealmMapCanvas({ atWar, baronies, ro
           cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
           cctx.clearRect(0, 0, rect.width, rect.height);
           cctx.save();
-          cctx.translate(-s.camX * s.zoom, -s.camY * s.zoom);
-          cctx.scale(s.zoom, s.zoom);
+          cctx.translate(-camX * zoom, -camY * zoom);
+          cctx.scale(zoom, zoom);
 
           fillOcean(cctx);
           const land = getLandPoly();
@@ -994,13 +1042,13 @@ export const RealmMapCanvas = memo(function RealmMapCanvas({ atWar, baronies, ro
           cctx.fillStyle = vignette;
           cctx.fillRect(0, 0, W, H);
 
-          drawHexGrid(cctx, s.camX, s.camY, s.zoom, vw, vh);
+          drawHexGrid(cctx, camX, camY, zoom, vw, vh);
           drawTerrain(cctx);
           drawRivers(cctx);
           drawRoads(cctx, s.roads, settMapRef.current);
           // Fog of war overlay
           if (s.exploredHexes && Object.keys(s.exploredHexes).length > 0) {
-            drawFogOfWar(cctx, s.exploredHexes, s.camX, s.camY, s.zoom, vw, vh);
+            drawFogOfWar(cctx, s.exploredHexes, camX, camY, zoom, vw, vh);
           }
           // Realm territories drawn ABOVE the fog so baron colors always read
           // (CK3-style political map), while unexplored land stays darker.
@@ -1018,15 +1066,15 @@ export const RealmMapCanvas = memo(function RealmMapCanvas({ atWar, baronies, ro
 
       // Animated overlay (weather + war pulses) still drawn every frame
       ctx.save();
-      ctx.translate(-s.camX * s.zoom, -s.camY * s.zoom);
-      ctx.scale(s.zoom, s.zoom);
+      ctx.translate(-camX * zoom, -camY * zoom);
+      ctx.scale(zoom, zoom);
       drawWarZones(ctx, s.atWar, s.baronies);
       if (s.season) drawWeatherParticles(ctx, s.season, Math.min(dt, 0.1));
       ctx.restore();
     }
 
     ctx.restore();
-  }, [staticKey]);
+  }, [staticKey, camRef]);
 
   useEffect(() => {
     // Props flow into the rAF draw loop via this ref. Synced in an effect (not during

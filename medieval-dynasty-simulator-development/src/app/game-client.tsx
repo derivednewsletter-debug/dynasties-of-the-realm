@@ -863,6 +863,11 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   const speedRef = useRef(speed); speedRef.current = speed;
 
   const camRef = useRef(cam); camRef.current = cam;
+
+  // Keep the DOM marker container's camera transform in sync with the committed cam
+  // state on EVERY camera change (center, keyboard, zoom buttons, minimap, reset),
+  // not just during drag/wheel — so markers and the terrain canvas share one camera.
+  useEffect(() => { syncCamTransform(cam.x, cam.y, cam.z); }, [cam.x, cam.y, cam.z]);
   const gRef = useRef(g); gRef.current = g;
   const dirtyRef = useRef(false);
   const lastTickRef = useRef(0);
@@ -2169,8 +2174,11 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     <main className="relative h-screen w-screen overflow-hidden bg-[#0a0908] text-[#eee4d0]">
       {/* ════ MAP ════ */}
       <div ref={mapRef} className={`absolute inset-0 select-none ${drag.current.on ? "cursor-grabbing" : "cursor-grab"}`} style={{ touchAction: "none" }} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel}>
+        {/* Viewport-anchored terrain canvas — a sibling OUTSIDE the camera-transformed
+            container so its internal translate/scale is the single camera (matching the
+            DOM markers). Driven live via camRef at 60fps. */}
+        <RealmMapCanvas atWar={g.atWar} baronies={g.baronies} roads={g.roads ?? []} settlements={g.settlements} camX={cam.x} camY={cam.y} zoom={cam.z} camRef={camDirectRef} exploredHexes={g.exploredHexes} season={g.season} />
         <div ref={mapInnerRef} className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ width: W, height: H }}>
-          <RealmMapCanvas atWar={g.atWar} baronies={g.baronies} roads={g.roads ?? []} settlements={g.settlements} camX={cam.x} camY={cam.y} zoom={cam.z} exploredHexes={g.exploredHexes} season={g.season} />
 
           {/* thin barony borders — only rendered when zoomed in enough to see them */}
           {cam.z > 0.15 && <MapOverlaySvg borders={borders} roads={roadSegments} />}
