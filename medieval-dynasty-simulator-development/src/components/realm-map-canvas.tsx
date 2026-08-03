@@ -88,14 +88,16 @@ function rgba(hex: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-/** Per-house realm tint: hue/lightness/saturation drift off the region base color. */
+/** Per-house realm tint — CK3-style: each barony gets a clearly distinct, vivid
+ *  color. A golden-angle hue spread (anchored loosely to the region's own hue)
+ *  guarantees neighbouring barons read as different on the political map. */
 function baronyColor(color: string, id: string): [number, number, number] {
   const [r, g, b] = hexToRgb(color);
-  const [h, s, l] = rgbToHsl(r, g, b);
+  const [h] = rgbToHsl(r, g, b);
   const hh = hashStr(id);
-  const nh = (h + ((hh % 13) - 6) * 4 + 360) % 360;
-  const ns = clamp(s + (((hh >> 4) % 9) - 4) * 0.04, 0.18, 0.78);
-  const nl = clamp(l + (((hh >> 7) % 13) - 6) * 0.03, 0.34, 0.74);
+  const nh = (h * 0.22 + ((hh * 137.508) % 360) * 0.78) % 360;
+  const ns = clamp(0.55 + ((hh >> 4) % 5) * 0.06, 0.5, 0.8);
+  const nl = clamp(0.5 + ((hh >> 7) % 4) * 0.05, 0.46, 0.66);
   return hslToRgb(nh, ns, nl);
 }
 
@@ -140,6 +142,12 @@ function tracePoly(ctx: CanvasRenderingContext2D, pts: [number, number][]) {
   ctx.closePath();
 }
 
+function traceOpen(ctx: CanvasRenderingContext2D, pts: [number, number][]) {
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+}
+
 function fillOcean(ctx: CanvasRenderingContext2D) {
   const og = ctx.createRadialGradient(W / 2, H / 2, 2500, W / 2, H / 2, 8500);
   og.addColorStop(0, "#34505f");
@@ -173,50 +181,245 @@ function strokeCoastline(ctx: CanvasRenderingContext2D) {
 
 /* ═══ REALM TERRITORIES (CK3-style house-colored domains) ═══ */
 
-function baronyPoly(b: Barony): [number, number][] {
-  const r = 350 + (b.rel + 50) * 1.5;
-  const h = hashStr(b.id + b.house);
-  const pts: [number, number][] = [];
-  for (let i = 0; i <= 16; i++) {
-    const ang = (i / 16) * Math.PI * 2;
-    const wob = 0.8 + 0.32 * Math.abs(Math.sin(i * 2.6 + (h % 11)));
-    const x = b.x + Math.cos(ang) * r * wob + Math.sin(ang * 2 + h) * 16;
-    const y = b.y + Math.sin(ang) * r * wob * 0.94 + Math.cos(ang * 3 + h) * 16;
-    pts.push([x, y]);
+/* ── Voronoi tessellation: each barony's land is exactly the set of points
+ * closer to its seat than to any other — so neighbours share crisp, identical
+ * borders, CK3-style, instead of overlapping blobs. ── */
+
+// Deterministic hand-drawn wobble along a shared border. Both neighbouring
+// cells sample the same absolute t-grid with the same sorted pair key, so the
+// border geometry is shared exactly — gap-free and identical on both sides.
+function borderWobble(pairKey: string, t: number): number {
+  const h = hashStr(pairKey);
+  const a1 = 26 + (h % 34); // 26–60 px primary sway
+  const a2 = 8 + ((h >> 6) % 14); // 8–22 px secondary sway
+  const f1 = (Math.PI * 2) / (240 + (h % 220)); // ~1 wave per 240–460 px
+  const f2 = f1 * (1.9 + ((h >> 9) % 5) * 0.35);
+  const p1 = (h % 628) / 100;
+  const p2 = ((h >> 12) % 628) / 100;
+  return a1 * Math.sin(t * f1 + p1) + a2 * Math.sin(t * f2 + p2);
+}
+
+const CELL_STEP = 60; // wobble sample density along a border (px)
+const CELL_SIDE = 3200; // starting square around each seat, clipped into a cell
+const CELL_MAX_WOBBLE = 100; // pre-filter slack: max |wobble| + epsilon
+
+interface VoronoiResult {
+  cells: [number, number][][]; // one clipped polygon per barony (same order)
+  borders: [number, number][][]; // one crisp shared border per adjacent pair
+}
+
+// Module-level cache: barony seats never move during a session, so the whole
+// tessellation is computed once per seating layout and shared by the main map
+// and the minimap (even across static-cache rebuilds).
+const voronoiCache: { sig: string; result: VoronoiResult } = { sig: "", result: { cells: [], borders: [] } };
+
+function baronyCells(baronies: Barony[]): VoronoiResult {
+  const sig = baronies.map(b => `${b.id}@${b.x.toFixed(0)},${b.y.toFixed(0)}`).join(";");
+  if (voronoiCache.sig === sig) return voronoiCache.result;
+
+  const n = baronies.length;
+  const cells: [number, number][][] = [];
+  // For each adjacent pair, remember how far each side spans along the shared
+  // border axis so the crisp border polyline can be rebuilt from both sides.
+  const pairRanges = new Map<string, { i: number; j: number; range: [number, number][] }>();
+
+  for (let i = 0; i < n; i++) {
+    const b = baronies[i];
+    let poly: [number, number][] = [
+      [b.x - CELL_SIDE, b.y - CELL_SIDE],
+      [b.x + CELL_SIDE, b.y - CELL_SIDE],
+      [b.x + CELL_SIDE, b.y + CELL_SIDE],
+      [b.x - CELL_SIDE, b.y + CELL_SIDE],
+    ];
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue;
+      const o = baronies[j];
+      const dx = o.x - b.x, dy = o.y - b.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 1) continue;
+      // u points from b toward o (across the border); v runs along the border.
+      const ux = dx / len, uy = dy / len;
+      const vx = -uy, vy = ux;
+      const mx = (b.x + o.x) / 2, my = (b.y + o.y) / 2;
+
+      // Fast reject: if the whole polygon sits more than max-wobble from the
+      // straight bisector on one side, this pair can never touch the cell.
+      let minSd = Infinity, maxSd = -Infinity;
+      for (const [px, py] of poly) {
+        const sd = (px - mx) * ux + (py - my) * uy;
+        if (sd < minSd) minSd = sd;
+        if (sd > maxSd) maxSd = sd;
+      }
+      if (minSd > CELL_MAX_WOBBLE || maxSd < -CELL_MAX_WOBBLE) continue;
+
+      const pairKey = b.id < o.id ? `${b.id}|${o.id}` : `${o.id}|${b.id}`;
+      // Project the current polygon onto v to bound the wobble sampling. The
+      // absolute t-grid (k * CELL_STEP) is identical for both cells, so both
+      // clip against exactly the same hand-drawn border.
+      let tMin = Infinity, tMax = -Infinity;
+      for (const [px, py] of poly) {
+        const t = (px - mx) * vx + (py - my) * vy;
+        if (t < tMin) tMin = t;
+        if (t > tMax) tMax = t;
+      }
+      const rec = pairRanges.get(pairKey) ?? { i: Math.min(i, j), j: Math.max(i, j), range: [] as [number, number][] };
+      rec.range.push([tMin, tMax]);
+      pairRanges.set(pairKey, rec);
+
+      // Clip the polygon against the sampled border, one straight segment at a
+      // time (Sutherland–Hodgman). b's cell keeps the side with sd <= 0.
+      const k0 = Math.floor((tMin - CELL_MAX_WOBBLE) / CELL_STEP);
+      const k1 = Math.ceil((tMax + CELL_MAX_WOBBLE) / CELL_STEP);
+      let prevPt: [number, number] | null = null;
+      for (let k = k0; k <= k1; k++) {
+        const t = k * CELL_STEP;
+        const wob = borderWobble(pairKey, t);
+        const px = mx + wob * ux + t * vx;
+        const py = my + wob * uy + t * vy;
+        if (prevPt) {
+          const a = prevPt;
+          const out: [number, number][] = [];
+          for (let vi = 0; vi < poly.length; vi++) {
+            const c = poly[vi];
+            const nx = poly[(vi + 1) % poly.length];
+            const sc = (c[0] - a[0]) * ux + (c[1] - a[1]) * uy;
+            const sn = (nx[0] - a[0]) * ux + (nx[1] - a[1]) * uy;
+            const ic = sc <= 0.5, inn = sn <= 0.5;
+            if (ic) out.push(c);
+            if (ic !== inn) {
+              const f = sc / (sc - sn);
+              out.push([c[0] + (nx[0] - c[0]) * f, c[1] + (nx[1] - c[1]) * f]);
+            }
+          }
+          poly = out;
+          if (poly.length < 3) break;
+        }
+        prevPt = [px, py];
+      }
+    }
+    cells.push(poly);
   }
-  return pts;
+
+  // Rebuild one crisp border polyline per adjacent pair (shared geometry).
+  const borders: [number, number][][] = [];
+  for (const { i, j, range } of pairRanges.values()) {
+    if (range.length < 2) continue; // only one side saw it — not a shared edge
+    if (cells[i].length < 3 || cells[j].length < 3) continue; // degenerate cell
+    const b = baronies[i], o = baronies[j];
+    const dx = o.x - b.x, dy = o.y - b.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1) continue;
+    const ux = dx / len, uy = dy / len;
+    const vx = -uy, vy = ux;
+    const mx = (b.x + o.x) / 2, my = (b.y + o.y) / 2;
+    const pairKey = b.id < o.id ? `${b.id}|${o.id}` : `${o.id}|${b.id}`;
+    // Tiny margin (half a sample) masks the piecewise curve approximation
+    // without letting the border stub into a third realm at triple junctions.
+    const tLo = Math.max(range[0][0], range[1][0]) - CELL_STEP * 0.5;
+    const tHi = Math.min(range[0][1], range[1][1]) + CELL_STEP * 0.5;
+    const kLo = Math.floor(tLo / CELL_STEP), kHi = Math.ceil(tHi / CELL_STEP);
+    const pts: [number, number][] = [];
+    for (let k = kLo; k <= kHi; k++) {
+      const t = k * CELL_STEP;
+      const wob = borderWobble(pairKey, t);
+      pts.push([mx + wob * ux + t * vx, my + wob * uy + t * vy]);
+    }
+    if (pts.length >= 2) borders.push(pts);
+  }
+
+  voronoiCache.sig = sig;
+  voronoiCache.result = { cells, borders };
+  return voronoiCache.result;
 }
 
 function drawRealmTerritories(ctx: CanvasRenderingContext2D, baronies: Barony[]) {
-  // Non-player domains first, player realm last so its gold ring reads on top.
+  const { cells, borders } = baronyCells(baronies);
+
+  // Fills — non-player realms first, the player's seat last so it reads on top.
   for (let bi = 1; bi < baronies.length; bi++) {
     const b = baronies[bi];
+    const poly = cells[bi];
+    if (!poly || poly.length < 3) continue;
     const tri = baronyColor(b.color, b.id + b.house);
-    tracePoly(ctx, baronyPoly(b));
-    ctx.fillStyle = triAlpha(tri, 0.27);
+    tracePoly(ctx, poly);
+    ctx.fillStyle = triAlpha(tri, 0.55);
     ctx.fill();
-    ctx.strokeStyle = triAlpha(tri, 0.5);
-    ctx.lineWidth = 1;
-    ctx.stroke();
   }
   const p = baronies[0];
-  if (p) {
+  if (p && cells[0] && cells[0].length >= 3) {
     const tri = baronyColor(p.color, p.id + p.house);
-    tracePoly(ctx, baronyPoly(p));
-    ctx.fillStyle = triAlpha(tri, 0.36);
+    tracePoly(ctx, cells[0]);
+    ctx.fillStyle = triAlpha(tri, 0.65);
     ctx.fill();
-    ctx.strokeStyle = triAlpha(tri, 0.95);
-    ctx.lineWidth = 1.5;
+  }
+
+  // Soft ink underlay on every cell edge — hides fill seams and gives each
+  // realm a defined outline where it faces open land.
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "rgba(24,18,10,0.22)";
+  ctx.lineWidth = 3;
+  for (let bi = 0; bi < cells.length; bi++) {
+    const poly = cells[bi];
+    if (!poly || poly.length < 3) continue;
+    tracePoly(ctx, poly);
     ctx.stroke();
+  }
+  ctx.restore();
+
+  // Crisp shared borders — one hand-drawn ink line per adjacent pair (CK3-style).
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const bp of borders) {
+    traceOpen(ctx, bp);
+    ctx.strokeStyle = "rgba(22,16,9,0.6)";
+    ctx.lineWidth = 3.5;
+    ctx.stroke();
+    traceOpen(ctx, bp);
+    ctx.strokeStyle = "rgba(150,122,70,0.55)";
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // The player's realm gets a gold ring on top.
+  if (p && cells[0] && cells[0].length >= 3) {
     ctx.save();
     ctx.shadowColor = "rgba(244, 214, 120, 0.55)";
     ctx.shadowBlur = 22;
+    tracePoly(ctx, cells[0]);
     ctx.strokeStyle = "rgba(244, 214, 120, 0.95)";
     ctx.lineWidth = 3.5;
-    tracePoly(ctx, baronyPoly(p));
     ctx.stroke();
     ctx.restore();
   }
+}
+
+/** Standard even-odd ray-cast point-in-polygon test. */
+function pointInPoly(x: number, y: number, poly: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i];
+    const [xj, yj] = poly[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * Returns the index (into `baronies`) of the barony whose Voronoi territory
+ * contains the world point (x, y), or -1 if the point is off-land or outside
+ * every cell. Used to turn clicks on realm territory into a barony selection.
+ */
+export function baronyIndexAt(baronies: Barony[], x: number, y: number): number {
+  if (!pointInPoly(x, y, getLandPoly())) return -1; // don't select realms from the ocean
+  const { cells } = baronyCells(baronies);
+  for (let i = 0; i < cells.length; i++) {
+    const poly = cells[i];
+    if (poly.length >= 3 && pointInPoly(x, y, poly)) return i;
+  }
+  return -1;
 }
 
 /* ═══ TERRAIN DECORATIONS ═══ */
@@ -647,6 +850,11 @@ export const RealmMapCanvas = memo(function RealmMapCanvas({ atWar, baronies, ro
   const rafRef = useRef(0);
   const stateRef = useRef({ atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes, season });
   const lastFrameRef = useRef(0);
+  // World-only half of the static cache key (baronies/roads/settlements/fog).
+  // Rebuilt only when props change — never inside the per-frame hot path.
+  const worldSigRef = useRef("");
+  // staticMode (minimap) only needs ~10fps for the war-zone pulse, not 60.
+  const lastStaticDrawRef = useRef(0);
   const settMapRef = useRef(new Map<string, { x: number; y: number }>());
   const prevSettLenRef = useRef(settlements.length);
 
@@ -655,15 +863,10 @@ export const RealmMapCanvas = memo(function RealmMapCanvas({ atWar, baronies, ro
   // moves by >= 1 hex, the viewport resizes, or the world signature changes.
   const staticCacheRef = useRef<{ key: string; canvas: HTMLCanvasElement | null; ctx: CanvasRenderingContext2D | null; w: number; h: number }>({ key: "", canvas: null, ctx: null, w: 0, h: 0 });
 
+  // Cheap: camera + viewport only. The expensive world part comes from worldSigRef.
   const staticKey = useCallback((s: typeof stateRef.current, vw: number, vh: number, dpr: number) => {
     let k = `${Math.round(s.camX / 120)}|${Math.round(s.camY / 138.56)}|${s.zoom.toFixed(3)}|${Math.round(vw)}x${Math.round(vh)}@${dpr}`;
-    k += "|B" + s.baronies.map(b => `${b.id}@${b.x.toFixed(0)},${b.y.toFixed(0)},${b.rel.toFixed(0)},${b.color},${s.atWar.includes(b.id) ? 1 : 0}`).join(";");
-    k += "|R" + s.roads.map(r => `${r.fromSid}-${r.toSid}-${r.level}-${r.decayed ? 1 : 0}`).join(";");
-    k += "|S" + s.settlements.map(ss => `${ss.id}@${ss.x.toFixed(0)},${ss.y.toFixed(0)}`).join(";");
-    let eh = 0;
-    let eCount = 0;
-    if (s.exploredHexes) for (const e in s.exploredHexes) { eh = (eh * 31 + s.exploredHexes[e]) | 0; eCount++; }
-    k += `|E${eCount}:${eh}`;
+    k += "|" + worldSigRef.current;
     return k;
   }, []);
 
@@ -728,15 +931,15 @@ export const RealmMapCanvas = memo(function RealmMapCanvas({ atWar, baronies, ro
           fillParchment(cctx);
           // Skip hex grid in staticMode — too wasteful at minimap scale
           drawTerrain(cctx);
-          drawRealmTerritories(cctx, s.baronies);
           drawRivers(cctx);
-          drawRegionOverlays(cctx);
           drawRoads(cctx, s.roads, settMapRef.current);
           // Simplified fog for minimap: uniform dim overlay
           if (s.exploredHexes && Object.keys(s.exploredHexes).length > 0) {
             cctx.fillStyle = "rgba(20,18,15,0.25)";
             cctx.fillRect(0, 0, W, H);
           }
+          drawRealmTerritories(cctx, s.baronies);
+          drawRegionOverlays(cctx);
           cctx.restore();
           strokeCoastline(cctx);
           cctx.restore();
@@ -793,14 +996,16 @@ export const RealmMapCanvas = memo(function RealmMapCanvas({ atWar, baronies, ro
 
           drawHexGrid(cctx, s.camX, s.camY, s.zoom, vw, vh);
           drawTerrain(cctx);
-          drawRealmTerritories(cctx, s.baronies);
           drawRivers(cctx);
-          drawRegionOverlays(cctx);
           drawRoads(cctx, s.roads, settMapRef.current);
           // Fog of war overlay
           if (s.exploredHexes && Object.keys(s.exploredHexes).length > 0) {
             drawFogOfWar(cctx, s.exploredHexes, s.camX, s.camY, s.zoom, vw, vh);
           }
+          // Realm territories drawn ABOVE the fog so baron colors always read
+          // (CK3-style political map), while unexplored land stays darker.
+          drawRealmTerritories(cctx, s.baronies);
+          drawRegionOverlays(cctx);
           cctx.restore();
           strokeCoastline(cctx);
           drawCompass(cctx);
@@ -826,13 +1031,36 @@ export const RealmMapCanvas = memo(function RealmMapCanvas({ atWar, baronies, ro
   useEffect(() => {
     // Props flow into the rAF draw loop via this ref. Synced in an effect (not during
     // render) so the component can be React.memo'd without risking stale draws.
-    stateRef.current = { atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes, season };
+    const s = { atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes, season };
+    stateRef.current = s;
+    // Cache the world-only half of the static key here — O(baronies+roads+settlements+fog)
+    // runs only when those props actually change, never on every animation frame.
+    let ws = "B" + s.baronies.map(b => `${b.id}@${b.x.toFixed(0)},${b.y.toFixed(0)},${b.rel.toFixed(0)},${b.color},${s.atWar.includes(b.id) ? 1 : 0}`).join(";");
+    ws += "|R" + s.roads.map(r => `${r.fromSid}-${r.toSid}-${r.level}-${r.decayed ? 1 : 0}`).join(";");
+    ws += "|S" + s.settlements.map(ss => `${ss.id}@${ss.x.toFixed(0)},${ss.y.toFixed(0)}`).join(";");
+    let eh = 0;
+    let eCount = 0;
+    if (s.exploredHexes) for (const e in s.exploredHexes) { eh = (eh * 31 + s.exploredHexes[e]) | 0; eCount++; }
+    ws += `|E${eCount}:${eh}`;
+    worldSigRef.current = ws;
   }, [atWar, baronies, roads, settlements, camX, camY, zoom, staticMode, exploredHexes, season]);
 
   useEffect(() => {
     // Continuous loop: props flow in through stateRef, the static-layer cache keeps
-    // idle frames cheap. Weather always animates in dynamic mode.
-    const loop = () => { drawFrame(); rafRef.current = requestAnimationFrame(loop); };
+    // idle frames cheap. Weather always animates in dynamic mode. The minimap
+    // (staticMode) only needs a slow pulse, so throttle it to ~10fps.
+    const loop = () => {
+      if (stateRef.current.staticMode) {
+        const now = performance.now();
+        if (now - lastStaticDrawRef.current < 100) {
+          rafRef.current = requestAnimationFrame(loop);
+          return;
+        }
+        lastStaticDrawRef.current = now;
+      }
+      drawFrame();
+      rafRef.current = requestAnimationFrame(loop);
+    };
     rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
   }, [drawFrame]);

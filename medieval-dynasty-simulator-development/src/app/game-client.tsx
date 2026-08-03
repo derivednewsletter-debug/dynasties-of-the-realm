@@ -6,7 +6,7 @@ import { AuthModal, useAuth } from "@/components/auth-modal";
 import { SETTLEMENT_SVGS, PORTRAIT_SVGS, CREATION_PORTRAITS, DEITY_SVGS } from "@/components/game-svgs";
 import { GameIcon } from "@/components/game-icon";
 import { RESOURCE_ICONS, BUILDING_ICONS, OCCUPATION_ICONS, SETTLEMENT_ICONS, DEITY_GLYPHS, BANNER_URI, BANNER_FALLBACK, PLAYER_SHIELDS, BUILDING_FALLBACK, ACTION_ICONS, UI_ICONS, UNIT_ICONS, DOCK_ICONS } from "@/components/game-icons";
-import { RealmMapCanvas } from "@/components/realm-map-canvas";
+import { RealmMapCanvas, baronyIndexAt } from "@/components/realm-map-canvas";
 import { type RegionChoice, type BannerChoice, type GenderChoice, type PortraitChoice } from "./main-menu";
 import { type EndingData } from "./ending-screen";
 
@@ -27,7 +27,7 @@ interface Building { id: string; name: string; level: number; desc: string; prod
 interface Settlement { id: string; bid: string; name: string; type: SType; x: number; y: number; pop: number; home: boolean; desc: string }
 interface Barony { id: string; name: string; house: string; region: Region; banner: string; motto: string; eco: number; mil: number; dip: number; rel: number; ambition: string; x: number; y: number; color: string; story?: string; focus?: string }
 interface Rep { trust: number; respect: number; fear: number; prosperity: number; tradition: number }
-interface EvtOpt { label: string; hint: string; result: string; res?: Partial<Res>; rep?: Partial<Rep>; pres?: number }
+interface EvtOpt { label: string; hint: string; result: string; res?: Partial<Res>; rep?: Partial<Rep>; pres?: number; pop?: number }
 interface DecEvt { id: string; title: string; text: string; crisis: boolean; opts: EvtOpt[] }
 interface Caravan { id: string; tid: string; resource: RN; amount: number; days: number; total: number; silver: number }
 interface Alliance { bid: string; kind: "alliance" | "trade bloc" }
@@ -147,6 +147,32 @@ const OCC_STYLE: Record<string, { tunic: string; tool: string }> = {
   guard: { tunic: "#4a3a3a", tool: OCCUPATION_ICONS.guard }, merchant: { tunic: "#6a3a5a", tool: OCCUPATION_ICONS.merchant },
 };
 
+/* ── seasonal villager wardrobe: each citizen's tunic shifts with the season
+ * and gains an outer layer (winter cloaks + hoods, spring rain hoods, autumn
+ * shawls), mirroring how the settlement scenes change through the year. ── */
+function shiftHex(hex: string, delta: number): string {
+  if (hex.length === 4) hex = `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}`; // expand #666 → #666666
+  const n = parseInt(hex.slice(1), 16);
+  if (Number.isNaN(n)) return hex;
+  const c = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
+  return `#${((c(((n >> 16) & 255) + delta) << 16) | (c(((n >> 8) & 255) + delta) << 8) | c((n & 255) + delta)).toString(16).padStart(6, "0")}`;
+}
+
+const SEASON_WEAR: Record<Season, { tunicDelta: number; layer: "none" | "hood" | "cloak" | "shawl" }> = {
+  Summer: { tunicDelta: 24, layer: "none" },
+  Spring: { tunicDelta: -6, layer: "hood" },
+  Autumn: { tunicDelta: 6, layer: "shawl" },
+  Winter: { tunicDelta: -34, layer: "cloak" },
+};
+
+/* ── HUD season badge meta: mini-icon + accent color per season ── */
+const SEASON_META: Record<Season, { icon: string; color: string; glow: string }> = {
+  Spring: { icon: "🌸", color: "#e890a8", glow: "rgba(232,144,168,0.45)" },
+  Summer: { icon: "☀️", color: "#e0a040", glow: "rgba(224,160,64,0.45)" },
+  Autumn: { icon: "🍂", color: "#d0863f", glow: "rgba(208,134,63,0.45)" },
+  Winter: { icon: "❄️", color: "#7ab8e8", glow: "rgba(122,184,232,0.45)" },
+};
+
 const BUILDS: Building[] = [
   { id: "homes", name: "Timber Homes", level: 1, desc: "Warm hearths for new families.", prod: { food: -2 }, cost: { wood: 18, tools: 2, silver: 8 } },
   { id: "lumber", name: "Logging Camp", level: 1, desc: "Cutters bring wood from the pines.", prod: { wood: 10, leather: 2, herbs: 1 }, cost: { wood: 12, tools: 2, silver: 5 } },
@@ -237,6 +263,32 @@ const EVENTS: DecEvt[] = [
     { label: "Let the people judge", hint: "risky", result: "The preacher's words spread unchecked for a season.", rep: { trust: 3, tradition: -5 } } ] },
 ];
 
+/* ── season-turn festivals: one guaranteed decision fires whenever the season changes ── */
+const SEASONAL_EVENTS: Partial<Record<Season, DecEvt>> = {
+  Spring: {
+    id: "spring_festival", title: "The Spring Festival", text: "The snows recede and the valley gathers for the first planting — banners raised, barrels tapped, and every hearth decked with blossom. How shall the House keep the festival?", crisis: false, opts: [
+      { label: "Host a grand feast", hint: "+prestige +food", result: "The whole realm ate and danced beneath the blossom trees.", res: { food: 15 }, pres: 6, rep: { trust: 6, tradition: 3 } },
+      { label: "Bless the plows at the shrine", hint: "+tradition", result: "Priests blessed every plow before the first furrow was turned.", res: { food: 10 }, pres: 2, rep: { tradition: 8, trust: 2 } },
+      { label: "Celebrate modestly", hint: "thrifty", result: "A quiet feast kept the treasury full and the folk content.", res: { food: 5 }, pres: 1, rep: { respect: 2 } },
+    ],
+  },
+  Autumn: {
+    id: "autumn_harvest_boon", title: "The Harvest-Boon", text: "The autumn fields have burst with grain — a harvest so abundant the granaries can scarcely hold it. How will the House use this bounty?", crisis: false, opts: [
+      { label: "Fill the granaries to bursting", hint: "+big food", result: "Every bin and cellar was packed against the coming frost.", res: { food: 120 }, rep: { prosperity: 6 } },
+      { label: "Sell the surplus at market", hint: "+silver", result: "Merchants paid a king's ransom for the golden grain.", res: { food: 30, silver: 80 }, rep: { prosperity: 8 } },
+      { label: "Hold a harvest-home for the folk", hint: "+trust +food", result: "The valley feasted and still the barns ran over.", res: { food: 60 }, rep: { trust: 10, tradition: 5 }, pres: 3 },
+    ],
+  },
+  Winter: {
+    id: "winter_famine", title: "The Winter Famine", text: "The winter drags on and the granaries run low. Hunger stalks the hearths of the realm, and the weak are beginning to sicken. The House must act.", crisis: true, opts: [
+      { label: "Ration and endure", hint: "-pop, brave", result: "Half portions and stern words carried most through the frost.", res: { food: -15 }, pop: -2, rep: { trust: -3, respect: 4 } },
+      { label: "Buy grain from the southern markets", hint: "-silver", result: "Wagons of southern wheat arrived just before the roads froze.", res: { food: 60, silver: -90 }, rep: { prosperity: 3 } },
+      { label: "Hunt the deep woods", hint: "risky", result: "Hunters braved the drifts and brought back venison and wolf-pelts.", res: { food: 35, weapons: -2 }, rep: { fear: 3, respect: 2 } },
+      { label: "Turn the weakest away", hint: "cruel", result: "The hearths burned warmer for the few — and the realm remembers.", res: { food: 20 }, pop: -5, rep: { fear: 8, trust: -8, respect: -3 }, pres: -2 },
+    ],
+  },
+};
+
 /* ───────── helpers ───────── */
 // Improved helper functions with better naming and validation
 const seed = (n: number) => { const x = Math.sin(n * 999.13) * 10000; return x - Math.floor(x); };
@@ -317,7 +369,7 @@ const portrait = (m: Family, i: number, rulerPortrait?: PortraitChoice) => {
 };
 const renown = (r: number) => r > 80 ? "Renowned" : r > 60 ? "Respected" : r > 40 ? "Known" : "Obscure";
 const sIcon = (t: SType, h: boolean) => h ? SETTLEMENT_ICONS.home : t === "city" ? SETTLEMENT_ICONS.city : t === "town" ? SETTLEMENT_ICONS.town : t === "village" ? SETTLEMENT_ICONS.village : SETTLEMENT_ICONS.hamlet;
-const sImg = (t: SType, h: boolean) => h ? SETTLEMENT_SVGS.hamlet : t === "city" ? SETTLEMENT_SVGS.city : t === "town" ? SETTLEMENT_SVGS.town : SETTLEMENT_SVGS.village;
+const sImg = (t: SType, h: boolean, season: Season) => h ? SETTLEMENT_SVGS.home[season] : t === "city" ? SETTLEMENT_SVGS.city[season] : t === "town" ? SETTLEMENT_SVGS.town[season] : t === "village" ? SETTLEMENT_SVGS.village[season] : SETTLEMENT_SVGS.hamlet[season];
 const sArt = (t: SType, h: boolean) => h ? 760 : t === "city" ? 1150 : t === "town" ? 900 : t === "village" ? 660 : 520;
 const chron = (y: number, s: Season, t: string, tx: string, tone: string): ChronEntry => ({ id: uid("c"), year: y, season: s, title: t, text: tx, tone });
 
@@ -527,8 +579,10 @@ function genCitizens(settlements: Settlement[]): Citizen[] {
     const artR = sArt(s.type, s.home) / 2;
     for (let i = 0; i < n; i++) {
       const k = out.length;
-      // orbit ring sits on the OUTER streets/fields, never over the dense building core
-      const ring = 0.56 + (i % 4) * 0.09 + seed(k * 5) * 0.05;
+      // orbit ring sits on the OUTER streets/fields, never over the dense building core.
+      // The home seat's art card is wide and short, so its citizens orbit closer in
+      // (they walk within the scene) instead of floating past its vertical edges.
+      const ring = s.home ? 0.28 + (i % 4) * 0.045 + seed(k * 5) * 0.03 : 0.56 + (i % 4) * 0.09 + seed(k * 5) * 0.05;
       out.push({
         id: `cz-${k}`, name: `${NAMES[k % NAMES.length]} ${SURNAMES[(k * 3) % SURNAMES.length]}`,
         occ: OCCS[k % OCCS.length], age: 16 + (k * 7) % 48, mood: 55 + k % 8,
@@ -755,10 +809,13 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   const lastTickRef = useRef(0);
 
   const home = useMemo(() => g.settlements.find(s => s.home) ?? g.settlements[0], [g.settlements]);
-  const selB = g.baronies.find(b => b.id === g.selBid) ?? g.baronies[0];
-  const selS = g.settlements.find(s => s.id === g.selSid) ?? home;
-  const selC = g.citizens.find(c => c.id === g.selCid) ?? null;
-  const living = g.family.filter(m => m.status === "Living");
+  const baronyById = useMemo(() => new Map(g.baronies.map(b => [b.id, b])), [g.baronies]);
+  const settlementById = useMemo(() => new Map(g.settlements.map(s => [s.id, s])), [g.settlements]);
+  const citizenById = useMemo(() => new Map(g.citizens.map(c => [c.id, c])), [g.citizens]);
+  const selB = baronyById.get(g.selBid) ?? g.baronies[0];
+  const selS = settlementById.get(g.selSid) ?? home;
+  const selC = g.selCid ? citizenById.get(g.selCid) ?? null : null;
+  const living = useMemo(() => g.family.filter(m => m.status === "Living"), [g.family]);
 
   const center = useCallback((wx: number, wy: number, z?: number) => {
     setCam(c => { const zz = z ?? c.z; return { x: cl(wx - vp.w / (2 * zz), 0, Math.max(0, W - vp.w / zz)), y: cl(wy - vp.h / (2 * zz), 0, Math.max(0, H - vp.h / zz)), z: zz }; });
@@ -768,10 +825,12 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
    useEffect(() => {
      setMapReady(true);
      const idle = window.setTimeout(() => {
-       for (const src of [SETTLEMENT_SVGS.hamlet, SETTLEMENT_SVGS.village, SETTLEMENT_SVGS.town, SETTLEMENT_SVGS.city]) {
-         const img = new Image();
-         img.decoding = "async";
-         img.src = src;
+       for (const type of [SETTLEMENT_SVGS.hamlet, SETTLEMENT_SVGS.village, SETTLEMENT_SVGS.town, SETTLEMENT_SVGS.city, SETTLEMENT_SVGS.home]) {
+         for (const src of Object.values(type)) {
+           const img = new Image();
+           img.decoding = "async";
+           img.src = src;
+         }
        }
      }, 120);
      return () => window.clearTimeout(idle);
@@ -1120,9 +1179,16 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
           }
         }
 
-        // random decision event — filter by current rank to avoid anachronisms
+        // decision event — a seasonal festival is guaranteed when the season turns;
+        // otherwise a random decision event, filtered by current rank
         let evt: DecEvt | null = null;
-        if (Math.random() < 0.008 * step) {
+        const seasonal = prev.season !== season ? SEASONAL_EVENTS[season] : undefined;
+        // The famine only truly bites when the granaries are thin — a well-stocked
+        // realm weathers the frost and falls through to the usual random events.
+        const seasonalEvt = seasonal?.id === "winter_famine" && res.food >= pop * 1.5 ? undefined : seasonal;
+        if (seasonalEvt) {
+          evt = seasonalEvt;
+        } else if (Math.random() < 0.008 * step) {
           const currentRank = promoteRank({ ...prev, pop, prestige, rep });
           const eligibleEvents = EVENTS.filter(e => {
             const earlyRanks = ["Hamlet", "Village", "Town"];
@@ -1395,7 +1461,10 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   }, [g.dynastyExtinct]);
 
   /* ── actions ── */
-  const resolveEvt = (o: EvtOpt) => { setConfirmReset(false); setG(p => { if (!p.evt) return p; const rep = { ...p.rep }; for (const [k, v] of Object.entries(o.rep ?? {}) as [keyof Rep, number][]) rep[k] = clamp01(rep[k] + v); sound.play(p.evt.crisis ? "crisis" : "event"); return { ...p, res: chRes(p.res, o.res ?? {}), rep, prestige: p.prestige + (o.pres ?? 0), evt: null, chronicle: [chron(p.year, p.season, p.evt.title, o.result, "warning"), ...p.chronicle] }; }); };
+  const resolveEvt = (o: EvtOpt) => { setConfirmReset(false); setG(p => { if (!p.evt) return p; const rep = { ...p.rep }; for (const [k, v] of Object.entries(o.rep ?? {}) as [keyof Rep, number][]) rep[k] = clamp01(rep[k] + v); sound.play(p.evt.crisis ? "crisis" : "event"); // negative pop values are a percentage of the current population, so a famine
+  // strains a great city as hard as a hamlet
+  const popDelta = (o.pop ?? 0) < 0 ? -Math.max(1, Math.round(p.pop * -(o.pop ?? 0) / 100)) : (o.pop ?? 0);
+  return { ...p, res: chRes(p.res, o.res ?? {}), rep, prestige: p.prestige + (o.pres ?? 0), pop: clamp(p.pop + popDelta, MIN_POPULATION, p.popCap), evt: null, chronicle: [chron(p.year, p.season, p.evt.title, o.result, "warning"), ...p.chronicle] }; }); };
 
 /* module-level build constants */
 const BUILD_ICONS: Record<string, string> = BUILDING_ICONS;
@@ -1645,7 +1714,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       const t = e.target as HTMLElement;
       if ((t.tagName === "INPUT" || t.closest("[data-ui]")) && e.key !== "Escape") return;
       const cz = camRef.current.z;
-      if (e.key === " ") { e.preventDefault(); setSpeed(s => s === 0 ? 1 : 0); }
+      if (e.key === " ") { e.preventDefault(); setSpeed(s => { if (s === 0) return 1; if (s === 1) return 2; if (s === 2) return 4; return 0; }); }
       if (e.key === "Escape") { setPanel(null); setConfirmReset(false); setBuildMode(false); setPlaceBuildId(null); ghostRef.current = null; }
       if (e.key === "ArrowLeft" || e.key === "a") setCam(c => ({ ...c, x: cl(c.x - 120 / cz, 0, Math.max(0, W - vp.w / cz)) }));
       if (e.key === "ArrowRight" || e.key === "d") setCam(c => ({ ...c, x: cl(c.x + 120 / cz, 0, Math.max(0, W - vp.w / cz)) }));
@@ -1656,6 +1725,13 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       // Ctrl+S = save, Ctrl+L = load
       if (e.ctrlKey && e.key === "s") { e.preventDefault(); saveGame(); }
       if (e.ctrlKey && e.key === "l") { e.preventDefault(); loadGame(); }
+      // Number keys 1-9 open dock panels
+      const panelKeys: Panel[] = ["Build", "Training", "Council", "Trade", "War", "Faith", "Factions", "Resources", "Chronicle"];
+      const num = parseInt(e.key);
+      if (num >= 1 && num <= 9 && !e.ctrlKey && !e.metaKey) {
+        const target = panelKeys[num - 1];
+        if (target) { setPanel(p => p === target ? null : target); }
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -1664,7 +1740,21 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
   /* ── map input ── */
   const onDown = (e: React.PointerEvent) => { if ((e.target as HTMLElement).closest("[data-ui]")) return; drag.current = { on: true, sx: e.clientX, sy: e.clientY, cx: cam.x, cy: cam.y, moved: false }; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); };
   const onMove = (e: React.PointerEvent) => { if (buildMode && placeBuildId) { const r = mapRef.current?.getBoundingClientRect(); if (r) { const wx = cam.x + (e.clientX - r.left) / cam.z; const wy = cam.y + (e.clientY - r.top) / cam.z; ghostRef.current = { x: wx, y: wy }; const now = performance.now(); if (now - ghostTickRef.current > 16) { ghostTickRef.current = now; setGhostRender(n => n + 1); } } } if (!drag.current.on) return; const dx = e.clientX - drag.current.sx, dy = e.clientY - drag.current.sy; if (Math.hypot(dx, dy) > 4) drag.current.moved = true; setCam(c => ({ ...c, x: cl(drag.current.cx - dx / c.z, 0, Math.max(0, W - vp.w / c.z)), y: cl(drag.current.cy - dy / c.z, 0, Math.max(0, H - vp.h / c.z)) })); };
-  const onUp = (e: React.PointerEvent) => { const wasMoved = drag.current.moved; drag.current.on = false; if (buildMode && placeBuildId && !wasMoved && !(e.target as HTMLElement).closest("[data-ui]")) { const r = mapRef.current?.getBoundingClientRect(); if (r) { const wx = cam.x + (e.clientX - r.left) / cam.z; const wy = cam.y + (e.clientY - r.top) / cam.z; placeBuilding(wx, wy); } } };
+  const onUp = (e: React.PointerEvent) => {
+    const wasMoved = drag.current.moved;
+    drag.current.on = false;
+    const onUi = !!(e.target as HTMLElement).closest?.("[data-ui]");
+    const r = mapRef.current?.getBoundingClientRect();
+    if (r && !wasMoved && !onUi) {
+      const wx = cam.x + (e.clientX - r.left) / cam.z;
+      const wy = cam.y + (e.clientY - r.top) / cam.z;
+      if (buildMode && placeBuildId) { placeBuilding(wx, wy); return; }
+      if (buildMode) return; // browsing the build panel — don't hijack the click
+      // click a barony's realm territory to open its panel
+      const bi = baronyIndexAt(g.baronies, wx, wy);
+      if (bi >= 0) pickB(g.baronies[bi]);
+    }
+  };
   const onWheel = (e: React.WheelEvent) => { e.preventDefault(); e.stopPropagation(); const r = mapRef.current?.getBoundingClientRect(); if (!r) return; const mx = e.clientX - r.left, my = e.clientY - r.top; setCam(c => { const wx = c.x + mx / c.z, wy = c.y + my / c.z; const nz = cl(c.z * (e.deltaY > 0 ? 0.96 : 1.04), 0.08, 3.2); return { z: nz, x: cl(wx - mx / nz, 0, Math.max(0, W - vp.w / nz)), y: cl(wy - my / nz, 0, Math.max(0, H - vp.h / nz)) }; }); };
 
   const toggle = useCallback((p: Panel) => { setConfirmReset(false); setPanel(cur => cur === p ? null : p); }, []);
@@ -1690,13 +1780,13 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     const l: string[] = [];
     if (g.res.food < g.pop / 2) l.push("Food stores are low.");
     if (g.season === "Winter" && g.res.wood < 20) l.push("Firewood is critically low.");
-    if (g.family.some(m => m.role === "Child of the House" && m.age === 16)) l.push("A child has come of age.");
+    if (living.some(m => m.role === "Child of the House" && m.age === 16)) l.push("A child has come of age.");
     if (g.atWar.length) l.push(`At war with ${g.atWar.length} house(s).`);
     const dom = getDominantDeity(g.faith ?? {});
     if (dom) l.push(`The ${DEITY_INFO[dom].title.toLowerCase()} ${DEITY_INFO[dom].name} holds dominion over the realm.`);
-    else if ((g.faith ?? {}) && Object.values(g.faith ?? {}).some(v => v > 5)) l.push("No pillar holds dominion — the temples wait for a champion.");
-    if ((g.factions ?? []).length) {
-      for (const f of (g.factions ?? [])) {
+    else if (Object.values(g.faith ?? {}).some(v => v > 5)) l.push("No pillar holds dominion — the temples wait for a champion.");
+    if (g.factions?.length) {
+      for (const f of g.factions) {
         if (f.aggression > 70) l.push(`Faction "${f.name}" is growing violent — ${f.members} members seek ${f.goal}.`);
         else if (f.aggression > 40) l.push(`Faction "${f.name}" voices discontent — ${f.members} followers.`);
       }
@@ -1749,10 +1839,10 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
 
   const seasonRateMemo = useMemo(() => seasonRate(g), [g.season, g.pop, g.buildings]);
   const seasonPct = (g.day / DAYS_PER_SEASON) * 100;
+  const nextSeason = SEASONS[(SEASONS.indexOf(g.season) + 1) % 4];
+  const daysToNext = Math.max(0, Math.ceil(DAYS_PER_SEASON - g.day));
 
   /* ── cheap lookup maps: replace O(n) .find()/.filter() in render ── */
-  const baronyById = useMemo(() => new Map(g.baronies.map(b => [b.id, b])), [g.baronies]);
-  const settlementById = useMemo(() => new Map(g.settlements.map(s => [s.id, s])), [g.settlements]);
   const citizensBySid = useMemo(() => {
     const m = new Map<string, Citizen[]>();
     for (const c of g.citizens) {
@@ -1807,20 +1897,23 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
 
           {/* settlement artwork */}
           {visSettles.filter(s => LOD.art || s.id === g.selSid).map(s => (
-            <SettlementArt key={`art-${s.id}`} s={s} house={baronyById.get(s.bid)?.house ?? ""} selected={g.selSid === s.id} onPick={pickS} onHover={onHover} onLeave={onLeave} />
+            <SettlementArt key={`art-${s.id}`} s={s} house={baronyById.get(s.bid)?.house ?? ""} selected={g.selSid === s.id} season={g.season} onPick={pickS} onDbl={onDblCenterS} onHover={onHover} onLeave={onLeave} />
           ))}
 
           {/* villagers – CSS orbit on the outer streets, never over the building core */}
           {LOD.people && visSettles.map(s => {
             const cits = citizensBySid.get(s.id) ?? [];
             return cits.map(c => (
-              <CitizenOrbit key={c.id} c={c} sx={s.x} sy={s.y} selected={g.selCid === c.id} tunic={OCC_STYLE[c.occ]?.tunic ?? "#666"} onPick={pickC} onHover={onHover} onLeave={onLeave} />
+              <CitizenOrbit key={c.id} c={c} sx={s.x} sy={s.y} selected={g.selCid === c.id} season={g.season} tunic={OCC_STYLE[c.occ]?.tunic ?? "#666"} onPick={pickC} onHover={onHover} onLeave={onLeave} />
             ));
           })}
 
-          {/* settlement markers */}
+          {/* settlement markers — the home seat's art card replaces its marker pin
+              whenever the card is on screen, so nothing floats disconnected above it */}
           {LOD.settles && visSettles.map(s => (
-            <SettlementMarker key={s.id} s={s} house={baronyById.get(s.bid)?.house ?? ""} selected={g.selSid === s.id}
+            s.home && (LOD.art || g.selSid === s.id)
+              ? null
+              : <SettlementMarker key={s.id} s={s} house={baronyById.get(s.bid)?.house ?? ""} selected={g.selSid === s.id}
               showName={LOD.names} yOffset={(LOD.art || g.selSid === s.id) ? sArt(s.type, s.home) * 0.30 : 0}
               nameFont={Math.max(11, 13 / Math.max(cam.z, .35))} onPick={pickS} onDbl={onDblCenterS} onHover={onHover} onLeave={onLeave} />
           ))}
@@ -1910,9 +2003,10 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
 
         {/* clock */}
         <div data-ui="1" className="ck-panel pointer-events-auto flex items-center gap-3 rounded-2xl px-4 py-2">
+          <SeasonBadge season={g.season} next={nextSeason} daysLeft={daysToNext} pct={seasonPct} />
           <div className="text-center">
             <p className="text-[13px] font-semibold leading-tight">Year {g.year} · <span className="text-[#c8a84e]">{g.season}</span></p>
-            <p className="text-[9px] text-[#8d8674]">Day {Math.floor(g.day)} of {DAYS_PER_SEASON}</p>
+            <p className="text-[9px] text-[#8d8674]">Day {Math.floor(g.day)} of {DAYS_PER_SEASON} · {SEASON_META[nextSeason].icon} {nextSeason} in {daysToNext}d</p>
             <div className="mt-1 h-1 w-32 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-[#c8a84e] transition-[width] duration-200" style={{ width: `${seasonPct}%` }} /></div>
           </div>
           <div className="flex items-center gap-1">
@@ -1990,7 +2084,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
 
           {panel === "House" && <HousePanel g={g} living={living} center={center} home={home} setPanel={setPanel} houseName={charData?.houseName ?? "Sheatsley"} bannerIcon={charData?.banner ? (PLAYER_SHIELDS[charData.banner] ?? BANNER_FALLBACK) : BANNER_FALLBACK} rulerPortrait={charData?.portrait} />}
           {panel === "Family" && <div className="flex gap-3 overflow-x-auto pb-2">{g.family.map((m, i) => <div key={m.id} className={`w-32 shrink-0 rounded-2xl border p-3 text-center ${m.status === "Dead" ? "border-white/5 opacity-50" : "border-white/8 bg-white/3"}`}><img src={portrait(m, i, charData?.portrait)} alt={m.name} className="mx-auto h-16 w-14 rounded-lg object-cover" onError={(e) => { (e.target as HTMLImageElement).src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='64'%3E%3Crect fill='%233a2a1a' width='56' height='64' rx='8'/%3E%3Ctext x='28' y='42' text-anchor='middle' fill='%23c8a84e' font-size='24' font-family='sans-serif'%3E${encodeURIComponent(m.name.split(" ")[0][0])}%3C/text%3E%3C/svg%3E`; }} /><p className="mt-1 text-[12px] font-semibold">{m.name}</p><p className="text-[10px] text-[#bbb5a0]">{m.role}</p><p className="text-[10px] text-[#c8a84e]">{m.status === "Dead" ? "Deceased" : `Age ${m.age}`}</p></div>)}<div className="flex w-32 shrink-0 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 text-[11px] text-[#8d8674]"><span className="text-xl">?</span>continues…</div></div>}
-          {panel === "Citizens" && <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{g.citizens.filter(c => c.sid === home.id).map(c => { const st = OCC_STYLE[c.occ]; return <button key={c.id} onClick={() => { pickC(c); center(home.x, home.y, 1.3); }} className="flex items-center gap-2 rounded-xl bg-white/3 px-3 py-2 text-left transition hover:bg-white/7"><span className="grid h-7 w-7 place-items-center rounded-full" style={{ background: st?.tunic }}><GameIcon uri={st?.tool} size={16} tile={false} /></span><span><span className="block text-[12px] font-medium">{c.name}</span><span className="text-[10px] text-[#bbb5a0]">{c.occ} · {c.age}</span></span></button>; })}</div>}
+          {panel === "Citizens" && <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{g.citizens.filter(c => c.sid === home.id).map(c => { const st = OCC_STYLE[c.occ]; return <button key={c.id} onClick={() => { pickC(c); center(home.x, home.y, 1.3); }} className="flex items-center gap-2 rounded-xl bg-white/3 px-3 py-2 text-left transition hover:bg-white/7"><span className="grid h-7 w-7 place-items-center rounded-full" style={{ background: shiftHex(st?.tunic ?? "#666", SEASON_WEAR[g.season].tunicDelta) }}><GameIcon uri={st?.tool} size={16} tile={false} /></span><span><span className="block text-[12px] font-medium">{c.name}</span><span className="text-[10px] text-[#bbb5a0]">{c.occ} · {c.age}</span></span></button>; })}</div>}
           {panel === "Alerts" && <div className="grid gap-6 md:grid-cols-2"><div><h3 className="mb-2 text-[11px] uppercase tracking-wider text-[#c8a84e]">Alerts</h3><ul className="space-y-1 text-[12px]">{alerts.map(a => <li key={a} className="rounded-xl bg-white/3 px-3 py-2">• {a}</li>)}</ul></div><div><h3 className="mb-2 text-[11px] uppercase tracking-wider text-[#c8a84e]">Recent</h3><ul className="space-y-1 text-[12px]">{g.chronicle.slice(0, 7).map(e => <li key={e.id} className="rounded-xl bg-white/3 px-3 py-2"><strong className="text-[#c8a84e]">{e.title}</strong> <span className="text-[#bbb5a0]">{e.text}</span></li>)}</ul></div></div>}
           {panel === "Build" && <div>
             <div className="mb-3 flex items-center gap-2">
@@ -2203,7 +2297,7 @@ function SettPanel({ s, b, g, center, setPanel, enterBuildMode }: { s: Settlemen
           </>}
         </div>
       </div>
-      <div className="overflow-hidden rounded-2xl"><img src={sImg(s.type, s.home)} alt={s.name} className="h-40 w-full object-cover" onError={(e) => { const isHome = s.home; (e.target as HTMLImageElement).src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='160'%3E%3Crect fill='%231a1611' width='400' height='160'/%3E%3Ctext x='200' y='95' text-anchor='middle' fill='${isHome ? "%23c8a84e" : "%23888"}' font-size='48' font-family='sans-serif'%3E${isHome ? "%E2%99%9C" : "%F0%9F%8F%98"}%3C/text%3E%3C/svg%3E`; }} /></div>
+      <div className="overflow-hidden rounded-2xl"><img src={sImg(s.type, s.home, g.season)} alt={s.name} className="h-40 w-full object-cover" onError={(e) => { const isHome = s.home; (e.target as HTMLImageElement).src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='160'%3E%3Crect fill='%231a1611' width='400' height='160'/%3E%3Ctext x='200' y='95' text-anchor='middle' fill='${isHome ? "%23c8a84e" : "%23888"}' font-size='48' font-family='sans-serif'%3E${isHome ? "%E2%99%9C" : "%F0%9F%8F%98"}%3C/text%3E%3C/svg%3E`; }} /></div>
     </div>
   );
 }
@@ -2214,9 +2308,10 @@ function BarPanel({ b, g, center, pickS, setPanel }: { b: Barony; g: GS; center:
     <div className="grid gap-5 md:grid-cols-[1fr_1fr]">
       <div>
         <div className="flex items-center gap-3"><span className="grid h-12 w-12 place-items-center rounded-full" style={{ background: b.color }}><GameIcon uri={BANNER_URI[b.banner] ?? BANNER_FALLBACK} size={22} tile={false} /></span><div><h3 className="text-[15px] font-bold">{b.house}</h3><p className="text-[12px] text-[#c8a84e]">{b.name}</p></div></div>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5"><span className="rounded-full bg-[#c8a84e]/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-[#c8a84e] ring-1 ring-[#c8a84e]/25">{b.region}</span><span className="rounded-full bg-white/5 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide capitalize text-[#c8a84e]">focus · {b.focus ?? "growth"}</span></div>
         <p className="mt-2 text-[12px] italic text-[#8d8674]">&ldquo;{b.motto}&rdquo;</p>
         {b.story && <p className="mt-2 rounded-xl border-l-2 border-[#c8a84e]/30 bg-[#c8a84e]/5 px-3 py-2 text-[11px] leading-relaxed text-[#bbb5a0]">{b.story}</p>}
-        <p className="mt-2 text-[12px]">{b.region} · seeks {b.ambition}</p>
+        <p className="mt-2 text-[12px]">seeks {b.ambition}</p>
         {allied && <p className="mt-1 text-[11px] font-semibold text-emerald-400">Bound to you by {allied.kind}</p>}
         {g.atWar.includes(b.id) && <p className="mt-1 text-[11px] font-semibold text-red-400">At war with {g.baronies[0]?.house ?? "your house"}</p>}
         <Meter l="Economy" v={b.eco} /><Meter l="Military" v={b.mil} /><Meter l="Diplomacy" v={b.dip} /><Meter l="Relations" v={b.rel + 50} />
@@ -2246,7 +2341,7 @@ function VillPanel({ c, g, center, tab, setTab }: { c: Citizen; g: GS; center: (
   return (
     <div className="grid gap-5 md:grid-cols-[250px_1fr]">
       <div>
-        <div className="flex items-center gap-3"><span className="grid h-12 w-12 place-items-center rounded-full" style={{ background: st.tunic }}><GameIcon uri={st.tool} size={24} tile={false} /></span><div><h3 className="text-[15px] font-bold">{c.name}</h3><p className="text-[12px] text-[#bbb5a0]">{c.occ} · age {c.age}</p></div></div>
+        <div className="flex items-center gap-3"><span className="grid h-12 w-12 place-items-center rounded-full" style={{ background: shiftHex(st.tunic, SEASON_WEAR[g.season].tunicDelta) }}><GameIcon uri={st.tool} size={24} tile={false} /></span><div><h3 className="text-[15px] font-bold">{c.name}</h3><p className="text-[12px] text-[#bbb5a0]">{c.occ} · age {c.age}</p></div></div>
         <p className="mt-2 text-[11px] text-[#8d8674]">Traits: {c.traits.join(", ")}</p>
         <p className="text-[11px] text-[#bbb5a0]">Lives in {s?.name}</p>
         <Meter l="Mood" v={c.mood} />
@@ -2571,13 +2666,25 @@ function AC({ t, b, bt, fn }: { t: React.ReactNode; b: string; bt: React.ReactNo
    a marker's own data actually changed. */
 type HoverInfo = { x: number; y: number; label: string; sub: string };
 
-const SettlementArt = memo(function SettlementArt({ s, house, selected, onPick, onHover, onLeave }: { s: Settlement; house: string; selected: boolean; onPick: (s: Settlement) => void; onHover: (h: HoverInfo) => void; onLeave: () => void }) {
+const SettlementArt = memo(function SettlementArt({ s, house, selected, season, onPick, onDbl, onHover, onLeave }: { s: Settlement; house: string; selected: boolean; season: Season; onPick: (s: Settlement) => void; onDbl?: (s: Settlement) => void; onHover: (h: HoverInfo) => void; onLeave: () => void }) {
   const size = sArt(s.type, s.home);
+  if (s.home) {
+    // The player's seat gets a proper scene card — full scene art, gold ring,
+    // name plate — instead of being cropped into a circle like the outposts.
+    return (
+      <button data-ui="1" onClick={() => onPick(s)} onDoubleClick={() => onDbl?.(s)} onPointerEnter={() => onHover({ x: s.x, y: s.y, label: s.name, sub: `${s.type} · ${house} · your seat` })} onPointerLeave={onLeave}
+        className="absolute -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl transition hover:brightness-110"
+        style={{ left: s.x, top: s.y, width: size, height: size * 0.45, zIndex: 5, boxShadow: selected ? "0 0 0 3px rgba(200,168,78,.85), 0 30px 70px rgba(0,0,0,.6)" : "0 0 0 2px rgba(200,168,78,.4), 0 24px 60px rgba(0,0,0,.55)" }}>
+        <img src={sImg(s.type, true, season)} alt={s.name} loading="lazy" decoding="async" className="h-full w-full object-cover" draggable={false} />
+        <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent px-2 pb-1.5 pt-6 text-center text-[13px] font-bold tracking-wide text-[#f4dfa0]">{s.name}</span>
+      </button>
+    );
+  }
   return (
     <button data-ui="1" onClick={() => onPick(s)} onPointerEnter={() => onHover({ x: s.x, y: s.y, label: s.name, sub: `${s.type} · ${house}` })} onPointerLeave={onLeave}
       className="absolute -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[46%] transition hover:brightness-110"
       style={{ left: s.x, top: s.y, width: size, height: size * 0.68, zIndex: 5, boxShadow: selected ? "0 0 0 4px rgba(200,168,78,.7), 0 30px 70px rgba(0,0,0,.55)" : "0 24px 60px rgba(0,0,0,.5)" }}>
-      <img src={sImg(s.type, s.home)} alt={s.name} loading="lazy" decoding="async" className="h-full w-full object-cover" draggable={false} />
+      <img src={sImg(s.type, false, season)} alt={s.name} loading="lazy" decoding="async" className="h-full w-full object-cover" draggable={false} />
       <span className="absolute inset-0" style={{ background: "radial-gradient(ellipse at center, transparent 52%, rgba(10,9,8,.85) 88%)" }} />
     </button>
   );
@@ -2608,7 +2715,9 @@ const BaronyCrest = memo(function BaronyCrest({ b, selected, size, topOffset, al
   );
 });
 
-const CitizenOrbit = memo(function CitizenOrbit({ c, sx, sy, selected, tunic, onPick, onHover, onLeave }: { c: Citizen; sx: number; sy: number; selected: boolean; tunic: string; onPick: (c: Citizen) => void; onHover: (h: HoverInfo) => void; onLeave: () => void }) {
+const CitizenOrbit = memo(function CitizenOrbit({ c, sx, sy, selected, season, tunic, onPick, onHover, onLeave }: { c: Citizen; sx: number; sy: number; selected: boolean; season: Season; tunic: string; onPick: (c: Citizen) => void; onHover: (h: HoverInfo) => void; onLeave: () => void }) {
+  const wear = SEASON_WEAR[season];
+  const tunicCol = shiftHex(tunic, wear.tunicDelta);
   return (
     <div className="orbit" style={{ left: sx, top: sy, zIndex: 14 }}>
       <div className="orbit-arm" style={{ animationDuration: `${c.dur}s`, animationDelay: `-${c.phase}s`, animationDirection: c.rev ? "reverse" : "normal" }}>
@@ -2616,8 +2725,13 @@ const CitizenOrbit = memo(function CitizenOrbit({ c, sx, sy, selected, tunic, on
           <div className="orbit-up" style={{ animationDuration: `${c.dur}s`, animationDelay: `-${c.phase}s`, animationDirection: c.rev ? "normal" : "reverse" }}>
             <button data-ui="1" onClick={() => onPick(c)} onPointerEnter={() => onHover({ x: sx, y: sy - 40, label: c.name, sub: c.occ })} onPointerLeave={onLeave} className={`villager ${selected ? "v-sel" : ""}`} title={`${c.name} · ${c.occ}`}>
               <span className="v-bob" style={{ animationDelay: `-${(c.phase % 1).toFixed(2)}s` }}>
+                {wear.layer === "cloak" && <span className="v-cloak" style={{ background: shiftHex(tunic, -52) }} />}
                 <span className="v-head" />
-                <span className="v-torso" style={{ background: tunic }} />
+                {wear.layer === "cloak" && <span className="v-hood" style={{ background: shiftHex(tunic, -44) }} />}
+                {wear.layer === "hood" && <span className="v-hood-rain" style={{ background: shiftHex(tunic, -28) }} />}
+                <span className="v-torso" style={{ background: tunicCol }} />
+                {wear.layer === "cloak" && <span className="v-collar" style={{ background: "#e8e2d6" }} />}
+                {wear.layer === "shawl" && <span className="v-shawl" style={{ background: shiftHex(tunic, 12) }} />}
                 <span className="v-legL" /><span className="v-legR" />
               </span>
             </button>
@@ -2650,6 +2764,24 @@ const MapOverlaySvg = memo(function MapOverlaySvg({ borders, roads }: { borders:
 
 const MinimapDots = memo(function MinimapDots({ baronies, atWar, alliances }: { baronies: Barony[]; atWar: string[]; alliances: Alliance[] }) {
   return <>{baronies.map(b => <span key={b.id} className="absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full" style={{ left: `${b.x / W * 100}%`, top: `${b.y / H * 100}%`, background: atWar.includes(b.id) ? "#e05a4a" : alliances.some(a => a.bid === b.id) ? "#57c07a" : b.color }} />)}</>;
+});
+
+/* ── animated season badge: mini-icon ring with a days-to-next-season countdown ── */
+const SeasonBadge = memo(function SeasonBadge({ season, next, daysLeft, pct }: { season: Season; next: Season; daysLeft: number; pct: number }) {
+  const m = SEASON_META[season];
+  const nm = SEASON_META[next];
+  const r = 13.5;
+  const circ = 2 * Math.PI * r;
+  return (
+    <div className="season-badge relative grid h-12 w-12 shrink-0 place-items-center" title={`${season} — ${nm.icon} ${next} in ${daysLeft} day${daysLeft === 1 ? "" : "s"}`}>
+      <svg className="absolute inset-0 h-full w-full -rotate-90" viewBox="0 0 34 34">
+        <circle cx="17" cy="17" r={r} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="2.5" />
+        <circle cx="17" cy="17" r={r} fill="none" stroke={m.color} strokeWidth="2.5" strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={circ * (1 - pct / 100)} style={{ transition: "stroke-dashoffset 0.3s linear" }} />
+      </svg>
+      <span key={season} aria-hidden="true" className="season-icon text-[16px] leading-none" style={{ filter: `drop-shadow(0 0 7px ${m.glow})` }}>{m.icon}</span>
+      <span className="absolute -bottom-1 rounded-full px-1.5 py-px text-[8px] font-bold leading-none tabular-nums text-[#1a1611]" style={{ background: m.color }}>{daysLeft}d</span>
+    </div>
+  );
 });
 
 const Dock = memo(function Dock({ panel, rank, onToggle, onHome }: { panel: Panel; rank: string; onToggle: (p: Panel) => void; onHome: () => void }) {
