@@ -752,6 +752,7 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   const camRef = useRef(cam); camRef.current = cam;
   const gRef = useRef(g); gRef.current = g;
   const dirtyRef = useRef(false);
+  const lastTickRef = useRef(0);
 
   const home = useMemo(() => g.settlements.find(s => s.home) ?? g.settlements[0], [g.settlements]);
   const selB = g.baronies.find(b => b.id === g.selBid) ?? g.baronies[0];
@@ -861,11 +862,10 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   /* ── REAL-TIME CLOCK ── with performance optimizations */
   useEffect(() => {
     if (speed === 0) return;
-    const lastUpdateRef = useRef(0);
     const id = setInterval(() => {
       const now = performance.now();
-      if (now - lastUpdateRef.current < 16) return; // Throttle to ~60fps
-      lastUpdateRef.current = now;
+      if (now - lastTickRef.current < 16) return; // Throttle to ~60fps
+      lastTickRef.current = now;
       
       setG(prev => {
         if (prev.evt) return prev;

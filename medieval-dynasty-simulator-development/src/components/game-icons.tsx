@@ -3,7 +3,7 @@
  * data:image/svg+xml;base64 URI, no /public files needed.
  *
  * Two variants:
- *  - tile(body): panel icons on the game's dark rounded tile (like the deity emblems)
+ *  - tile(body): panel icons (transparent artwork, styled for dark UI)
  *  - glyph(body): transparent artwork for map markers / overlays
  *  - shield(charge, tint): heraldic heater shield wrapping a charge
  */
@@ -15,12 +15,7 @@ function u(svg: string): string {
 }
 
 function tile(body: string): string {
-  return u(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
-  <defs><radialGradient id="ib" cx="50%" cy="34%"><stop offset="0%" stop-color="#2b2217"/><stop offset="100%" stop-color="#0e0b07"/></radialGradient></defs>
-  <rect width="96" height="96" fill="url(#ib)" rx="14"/>
-  <rect x="2.5" y="2.5" width="91" height="91" rx="12" fill="none" stroke="#c8a84e" stroke-width="1.5" opacity="0.45"/>
-  ${body}
-</svg>`);
+  return u(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">${body}</svg>`);
 }
 
 function glyph(body: string): string {
