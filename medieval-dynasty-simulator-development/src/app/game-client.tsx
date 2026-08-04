@@ -110,6 +110,11 @@ interface GS {
 /* ───────── world constants ───────── */
 const W = 15000, H = 10000;
 const DAYS_PER_SEASON = 90;
+// Sim clock: one virtual 60fps frame is ~16.7ms of wall time, but we only commit
+// React state at ~20fps (50ms). `step` is scaled to real elapsed time, so absolute
+// game speed (days/sec) is unchanged while render/layout/style work drops ~3x.
+const SIM_FRAME_MS = 1000 / 60;
+const SIM_COMMIT_MS = 50;
 const SEASONS: Season[] = ["Spring", "Summer", "Autumn", "Winter"];
 const PATHS: Path[] = ["Forest & Beast", "Iron", "Scholar", "Warrior", "Sea", "Land"];
 const MIN_POPULATION = 24;
@@ -990,17 +995,22 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   /* ── REAL-TIME CLOCK ── with performance optimizations */
   useEffect(() => {
     if (speed === 0) return;
+    lastTickRef.current = performance.now();
     const id = setInterval(() => {
       const now = performance.now();
-      if (now - lastTickRef.current < 16) return; // Throttle to ~60fps
+      const elapsed = now - lastTickRef.current;
+      if (elapsed < SIM_COMMIT_MS) return; // commit React state at ~20fps max
       // Skip React re-render during active pan/zoom — camera transform is handled
       // via direct DOM manipulation, so no re-render needed for visual smoothness
       if (drag.current.on) { lastTickRef.current = now; return; }
       lastTickRef.current = now;
-      
+      // Scale step by real elapsed wall-time (clamped so a background-tab wake-up
+      // can't leap hundreds of days at once). Total days/sec stays identical to the
+      // old 60fps cadence, but the huge React tree only reconciles ~3x less often.
+      const step = speed * (Math.min(elapsed, 250) / SIM_FRAME_MS);
+
       setG(prev => {
         if (prev.evt) return prev;
-        const step = speed;
         let day = prev.day + step, year = prev.year, season = prev.season;
         let family = prev.family, ruler = prev.ruler, pop = prev.pop, popCap = prev.popCap, prestige = prev.prestige;
         let lineagesBorn = prev.lineagesBorn;

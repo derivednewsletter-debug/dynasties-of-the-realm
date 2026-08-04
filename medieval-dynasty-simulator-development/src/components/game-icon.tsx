@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 
 interface GameIconProps {
   /** data:image/svg+xml URI. When omitted or on decode failure a gold glyph fallback renders. */
@@ -12,7 +12,7 @@ interface GameIconProps {
   tile?: boolean;
 }
 
-export function GameIcon({ uri, alt = "", size = 16, className = "", tile = true }: GameIconProps) {
+export const GameIcon = memo(function GameIcon({ uri, alt = "", size = 16, className = "", tile = true }: GameIconProps) {
   const [err, setErr] = useState(false);
   const style = { width: size, height: size };
   if (!uri || err) {
@@ -35,4 +35,4 @@ export function GameIcon({ uri, alt = "", size = 16, className = "", tile = true
       style={style}
     />
   );
-}
+});

@@ -922,7 +922,7 @@ export const RealmMapCanvas = memo(function RealmMapCanvas({ atWar, baronies, ro
     const dt = lastFrameRef.current ? (now - lastFrameRef.current) * 0.001 : 0.016;
     lastFrameRef.current = now;
 
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const rect = canvas.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
 
