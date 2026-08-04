@@ -678,7 +678,11 @@ function initGame(cd?: CharData): GS {
   const diffScale = 1 / rc.difficulty;
   const baseRes: Res = { food: 86, wood: 72, stone: 22, iron: 8, coal: 0, fish: 10, wool: 14, leather: 12, herbs: 16, tools: 7, weapons: 3, medicine: 2, silver: 35 };
   const merged = { ...baseRes } as Res;
-  for (const k of Object.keys(rc) as RN[]) merged[k] = Math.round((rc[k as keyof typeof rc] as number ?? baseRes[k]) * diffScale);
+  for (const k of Object.keys(rc)) {
+    const cur = rc[k as keyof typeof rc];
+    const v = typeof cur === "number" ? cur : baseRes[k as RN];
+    if (typeof v === "number" && Number.isFinite(v)) merged[k as RN] = Math.round(v * diffScale);
+  }
 
   return {
     day: 1, year: 1, season: "Spring", ruler, motto: rc.motto, rank: "Hamlet", prestige: 4,
