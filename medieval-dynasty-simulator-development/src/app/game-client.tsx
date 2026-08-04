@@ -2059,7 +2059,16 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       if (bi >= 0) pickB(g.baronies[bi]);
     }
   };
-  const onWheel = (e: React.WheelEvent) => { e.preventDefault(); e.stopPropagation(); const r = mapRef.current?.getBoundingClientRect(); if (!r) return; const mx = e.clientX - r.left, my = e.clientY - r.top; const c = camDirectRef.current; const wx = c.x + mx / c.z, wy = c.y + my / c.z; const nz = cl(c.z * (e.deltaY > 0 ? 0.96 : 1.04), 0.08, 3.2); const nx = cl(wx - mx / nz, 0, Math.max(0, W - vp.w / nz)); const ny = cl(wy - my / nz, 0, Math.max(0, H - vp.h / nz)); syncCamTransform(nx, ny, nz); setCam({ z: nz, x: nx, y: ny }); };
+  const onWheel = (e: WheelEvent) => { e.preventDefault(); e.stopPropagation(); const r = mapRef.current?.getBoundingClientRect(); if (!r) return; const mx = e.clientX - r.left, my = e.clientY - r.top; const c = camDirectRef.current; const wx = c.x + mx / c.z, wy = c.y + my / c.z; const nz = cl(c.z * (e.deltaY > 0 ? 0.96 : 1.04), 0.08, 3.2); const nx = cl(wx - mx / nz, 0, Math.max(0, W - vp.w / nz)); const ny = cl(wy - my / nz, 0, Math.max(0, H - vp.h / nz)); syncCamTransform(nx, ny, nz); setCam({ z: nz, x: nx, y: ny }); };
+
+  // React attaches wheel as a passive listener, which silently discards preventDefault.
+  // Attach a native non-passive listener so page scroll is blocked while zooming.
+  useEffect(() => {
+    const el = mapRef.current;
+    if (!el) return;
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  });
 
   const toggle = useCallback((p: Panel) => { setConfirmReset(false); setPanel(cur => cur === p ? null : p); }, []);
   const pickS = useCallback((s: Settlement, focus = false) => { setG(p => ({ ...p, selSid: s.id, selBid: s.bid, selCid: null })); setPanel("Settlement"); if (focus) center(s.x, s.y, 1.1); }, [center]);
@@ -2173,7 +2182,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
   return (
     <main className="relative h-screen w-screen overflow-hidden bg-[#0a0908] text-[#eee4d0]">
       {/* ════ MAP ════ */}
-      <div ref={mapRef} className={`absolute inset-0 select-none ${drag.current.on ? "cursor-grabbing" : "cursor-grab"}`} style={{ touchAction: "none" }} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel}>
+      <div ref={mapRef} className={`absolute inset-0 select-none ${drag.current.on ? "cursor-grabbing" : "cursor-grab"}`} style={{ touchAction: "none" }} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
         {/* Viewport-anchored terrain canvas — a sibling OUTSIDE the camera-transformed
             container so its internal translate/scale is the single camera (matching the
             DOM markers). Driven live via camRef at 60fps. */}
