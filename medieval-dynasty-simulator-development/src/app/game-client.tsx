@@ -6,7 +6,6 @@ import { AuthModal, useAuth } from "@/components/auth-modal";
 import { SETTLEMENT_SVGS, PORTRAIT_SVGS, CREATION_PORTRAITS, DEITY_SVGS } from "@/components/game-svgs";
 import { GameIcon } from "@/components/game-icon";
 import { RESOURCE_ICONS, BUILDING_ICONS, OCCUPATION_ICONS, SETTLEMENT_ICONS, DEITY_GLYPHS, BANNER_URI, BANNER_FALLBACK, PLAYER_SHIELDS, BUILDING_FALLBACK, ACTION_ICONS, UI_ICONS, UNIT_ICONS, DOCK_ICONS } from "@/components/game-icons";
-import { RealmMapCanvas, baronyIndexAt } from "@/components/realm-map-canvas";
 import { type RegionChoice, type BannerChoice, type GenderChoice, type PortraitChoice } from "./main-menu";
 import { type EndingData } from "./ending-screen";
 
@@ -836,47 +835,22 @@ function getBaronyRep(rep: FactionReputation[], bid: string): FactionReputation 
 /* ───────── component ───────── */
 export function GameClient({ charData, onEnding, onSave }: { charData?: { region: RegionChoice; gender: GenderChoice; firstName: string; houseName: string; banner: BannerChoice; path: string; portrait: PortraitChoice }; onEnding?: (data: EndingData) => void; onSave?: () => void }) {
   const [g, setG] = useState<GS>(() => initGame(charData));
-  const [mapReady, setMapReady] = useState(false);
   const [panel, setPanel] = useState<Panel>(null);
   const [speed, setSpeed] = useState(0);
   const [battleSetup, setBattleSetup] = useState<BattleSetup | null>(null);
-  const [notice, setNotice] = useState("Press ▶ to let time flow. Drag to explore, scroll to zoom. Arrow keys pan, Space toggles time, Esc closes panels.");
+  const [notice, setNotice] = useState("The Chronicle is open. Press ▶ to let the years flow — Space pauses, Esc closes panels, 1–9 open the council rooms.");
   const [cSearch, setCSearch] = useState("");
   const [rSearch, setRSearch] = useState("");
   const [cTone, setCTone] = useState<"all" | ChronEntry["tone"]>("all");
   const [cTab, setCTab] = useState<"Info" | "Skills" | "Memories">("Info");
   const [confirmReset, setConfirmReset] = useState(false);
   const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "synced" | "error">("idle");
-  const [buildMode, setBuildMode] = useState(false);
-  const [placeBuildId, setPlaceBuildId] = useState<string | null>(null);
-  const ghostRef = useRef<{ x: number; y: number } | null>(null);
-  const ghostTickRef = useRef(0);
-  const [ghostRender, setGhostRender] = useState(0);
-
+  const panelCloseRef = useRef<HTMLButtonElement>(null);
   // Auth
   const auth = useAuth();
   const sound = useSoundDesign();
-  const [cam, setCam] = useState({ x: 0, y: 0, z: 0.35 });
-  const [vp, setVp] = useState({ w: 1280, h: 800 });
-  const [hover, setHover] = useState<{ x: number; y: number; label: string; sub: string } | null>(null);
-
-  const mapRef = useRef<HTMLDivElement>(null);
-  const mapInnerRef = useRef<HTMLDivElement>(null);
-  const drag = useRef({ on: false, sx: 0, sy: 0, cx: 0, cy: 0, moved: false, lastFrame: 0 });
-  // Direct camera ref for bypassing React render cycle during pan/zoom
-  const camDirectRef = useRef({ x: 0, y: 0, z: 0.35 });
-  function syncCamTransform(x: number, y: number, z: number) {
-    if (mapInnerRef.current) mapInnerRef.current.style.transform = `translate(${-x * z}px,${-y * z}px) scale(${z})`;
-    camDirectRef.current = { x, y, z };
-  }
   const speedRef = useRef(speed); speedRef.current = speed;
 
-  const camRef = useRef(cam); camRef.current = cam;
-
-  // Keep the DOM marker container's camera transform in sync with the committed cam
-  // state on EVERY camera change (center, keyboard, zoom buttons, minimap, reset),
-  // not just during drag/wheel — so markers and the terrain canvas share one camera.
-  useEffect(() => { syncCamTransform(cam.x, cam.y, cam.z); }, [cam.x, cam.y, cam.z]);
   const gRef = useRef(g); gRef.current = g;
   const dirtyRef = useRef(false);
   const lastTickRef = useRef(0);
@@ -891,13 +865,8 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   const selC = g.selCid ? citizenById.get(g.selCid) ?? null : null;
   const living = useMemo(() => g.family.filter(m => m.status === "Living"), [g.family]);
 
-  const center = useCallback((wx: number, wy: number, z?: number) => {
-    setCam(c => { const zz = z ?? c.z; return { x: cl(wx - vp.w / (2 * zz), 0, Math.max(0, W - vp.w / zz)), y: cl(wy - vp.h / (2 * zz), 0, Math.max(0, H - vp.h / zz)), z: zz }; });
-  }, [vp]);
-
-   /* persistence + viewport */
+   /* persistence + preload the settlement artwork so scenes pop in instantly */
    useEffect(() => {
-     setMapReady(true);
      const idle = window.setTimeout(() => {
        for (const type of [SETTLEMENT_SVGS.hamlet, SETTLEMENT_SVGS.village, SETTLEMENT_SVGS.town, SETTLEMENT_SVGS.city, SETTLEMENT_SVGS.home]) {
          for (const src of Object.values(type)) {
@@ -985,8 +954,6 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
     }, 30000);
     return () => clearInterval(id);
   }, [auth.user]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { const fn = () => { if (!mapRef.current) return; const r = mapRef.current.getBoundingClientRect(); setVp({ w: r.width, h: r.height }); }; fn(); window.addEventListener("resize", fn); return () => window.removeEventListener("resize", fn); }, []);
-  useEffect(() => { center(home.x, home.y, 0.55); }, [vp.w, vp.h]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (speed > 0) sound.startAmbience(g.season, speed);
     else sound.stopAmbience();
@@ -1000,9 +967,6 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
       const now = performance.now();
       const elapsed = now - lastTickRef.current;
       if (elapsed < SIM_COMMIT_MS) return; // commit React state at ~20fps max
-      // Skip React re-render during active pan/zoom — camera transform is handled
-      // via direct DOM manipulation, so no re-render needed for visual smoothness
-      if (drag.current.on) { lastTickRef.current = now; return; }
       lastTickRef.current = now;
       // Scale step by real elapsed wall-time (clamped so a background-tab wake-up
       // can't leap hundreds of days at once). Total days/sec stays identical to the
@@ -1696,14 +1660,13 @@ export function GameClient({ charData, onEnding, onSave }: { charData?: { region
   }, [g.dynastyExtinct]);
 
   /* ── actions ── */
-  const resolveEvt = (o: EvtOpt) => { setConfirmReset(false); setG(p => { if (!p.evt) return p; const rep = { ...p.rep }; for (const [k, v] of Object.entries(o.rep ?? {}) as [keyof Rep, number][]) rep[k] = clamp01(rep[k] + v); sound.play(p.evt.crisis ? "crisis" : "event"); // negative pop values are a percentage of the current population, so a famine
+  const resolveEvt = (o: EvtOpt) => { setConfirmReset(false); setG(p => { if (!p.evt) return p; const rep = { ...p.rep }; for (const [k, v] of Object.entries(o.rep ?? {}) as [keyof Rep, number][]) rep[k] = clamp01(rep[k] + v); setNotice(o.result); sound.play(p.evt.crisis ? "crisis" : "event"); // negative pop values are a percentage of the current population, so a famine
   // strains a great city as hard as a hamlet
   const popDelta = (o.pop ?? 0) < 0 ? -Math.max(1, Math.round(p.pop * -(o.pop ?? 0) / 100)) : (o.pop ?? 0);
   return { ...p, res: chRes(p.res, o.res ?? {}), rep, prestige: p.prestige + (o.pres ?? 0), pop: clamp(p.pop + popDelta, MIN_POPULATION, p.popCap), evt: null, chronicle: [chron(p.year, p.season, p.evt.title, o.result, "warning"), ...p.chronicle] }; }); };
 
 /* module-level build constants */
 const BUILD_ICONS: Record<string, string> = BUILDING_ICONS;
-const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm: 90, mill: 75, mine: 85, smith: 65, market: 80, shrine: 60, watch: 70, temple_astra: 90, temple_kaelen: 90, temple_verna: 90, temple_valen: 90, temple_morvath: 90, temple_sol: 90 };
 
   const build = (t: Building) => { setConfirmReset(false); setG(p => {
     const ex = p.buildings.find(b => b.id === t.id);
@@ -1713,38 +1676,6 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     sound.play("build");
     return { ...p, buildings: ex ? p.buildings.map(b => b.id === t.id ? { ...b, level: b.level + 1 } : b) : [...p.buildings, { ...t, level: 1 }], res: chRes(p.res, Object.fromEntries(Object.entries(sc).map(([k, v]) => [k, -(v ?? 0)])) as Partial<Res>), prestige: p.prestige + (ex ? 2 : 3), rep: { ...p.rep, prosperity: clamp01(p.rep.prosperity + 3) }, chronicle: [chron(p.year, p.season, `${t.name} ${ex ? "Improved" : "Founded"}`, t.desc, "glory"), ...p.chronicle] };
   }); };
-
-  const placeBuilding = (wx: number, wy: number) => {
-    if (!placeBuildId) return;
-    const bt = BUILDS.find(b => b.id === placeBuildId);
-    if (!bt) return;
-    setG(p => {
-      const sid = p.selSid;
-      const sett = p.settlements.find(s => s.id === sid);
-      if (!sett) { setNotice("Select a settlement first."); return p; }
-      const dist = Math.hypot(wx - sett.x, wy - sett.y);
-      const maxDist = sArt(sett.type, sett.home) * 0.6;
-      if (dist > maxDist) { setNotice(`Too far from ${sett.name}. Place within the settlement bounds.`); return p; }
-      const radius = BUILD_PLACE_RADIUS[bt.id] ?? 70;
-      const occupied = p.placedBuildings.filter(pb => pb.sid === sid);
-      for (const pb of occupied) {
-        if (Math.hypot(pb.x - wx, pb.y - wy) < (BUILD_PLACE_RADIUS[pb.buildId] ?? 70) + radius - 20) {
-          setNotice("Too close to another building."); return p;
-        }
-      }
-      const ex = p.buildings.find(b => b.id === bt.id);
-      const sc = Object.fromEntries(Object.entries(bt.cost).map(([k, v]) => [k, Math.ceil((v ?? 0) * (ex ? ex.level + 1 : 1))])) as Partial<Res>;
-      if (!afford(p.res, sc)) { setNotice(`Need ${fmtD(sc)}`); return p; }
-      const pb: PlacedBuilding = { id: uid("pb"), buildId: bt.id, name: bt.name, sid, x: Math.round(wx), y: Math.round(wy), level: 1 };
-      setNotice(`${bt.name} placed near ${sett.name}.`);
-      return { ...p, placedBuildings: [...p.placedBuildings, pb], buildings: ex ? p.buildings.map(b => b.id === bt.id ? { ...b, level: b.level + 1 } : b) : [...p.buildings, { ...bt, level: 1 }], res: chRes(p.res, Object.fromEntries(Object.entries(sc).map(([k, v]) => [k, -(v ?? 0)])) as Partial<Res>), prestige: p.prestige + 3, rep: { ...p.rep, prosperity: clamp01(p.rep.prosperity + 3) }, chronicle: [chron(p.year, p.season, `${bt.name} Placed`, `A new ${bt.name.toLowerCase()} was built near ${sett.name}.`, "glory"), ...p.chronicle] };
-    });
-  };
-
-  const removeBuilding = useCallback((pbId: string) => {
-    setG(p => { const removed = p.placedBuildings.find(pb => pb.id === pbId); if (!removed) return p; const bExists = p.placedBuildings.filter(pb => pb.buildId === removed.buildId && pb.id !== pbId).length > 0; return { ...p, placedBuildings: p.placedBuildings.filter(pb => pb.id !== pbId), buildings: bExists ? p.buildings : p.buildings.filter(b => b.id !== removed.buildId) }; });
-    setNotice("Building removed.");
-  }, []);
 
   const trainAct = () => { setConfirmReset(false); setG(p => { if (p.army.training >= 100) { setNotice("Training already at maximum."); return p; } if (!afford(p.res, { food: 10, weapons: 2, silver: 12 })) { setNotice("Need food, weapons and silver."); return p; } setNotice("The militia drilled in the yard."); return { ...p, res: chRes(p.res, { food: -10, weapons: -2, silver: -12 }), prestige: p.prestige + 2, army: { ...p.army, training: clamp01(p.army.training + 4) }, rep: { ...p.rep, respect: clamp01(p.rep.respect + 4), fear: clamp01(p.rep.fear + 3) }, chronicle: [chron(p.year, p.season, "Militia Muster", "Hearthmere drilled under ash poles.", "glory"), ...p.chronicle] }; }); };
 
@@ -1884,6 +1815,8 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
   };
   const recallArmy = (id: string) => setG(p => {
     const h = p.settlements.find(s => s.home); if (!h) return p;
+    const army = (p.armies ?? []).find(a => a.id === id); if (!army) return p;
+    setNotice(`${army.name} is returning to ${h.name}.`);
     return { ...p, armies: (p.armies ?? []).map(a => a.id === id ? { ...a, task: "return", targetBid: null, tx: h.x, ty: h.y, daysLeft: Math.max(1, Math.ceil(Math.hypot(h.x - a.x, h.y - a.y) / a.speedPx)) } : a) };
   });
   const disbandArmy = (id: string) => setG(p => {
@@ -2007,7 +1940,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     const d = await r.json() as { save?: { payload?: GS } | null };
     if (d.save?.payload?.prices && d.save.payload.army && typeof d.save.payload.day === "number") { setG(normalizeState(d.save.payload)); setNotice("Chronicle loaded."); } else setNotice("No compatible save found.");
   };
-  const reset = () => { if (!confirmReset) { setConfirmReset(true); setNotice("Click reset again to confirm — this opens a blank Chronicle and discards the current one."); return; } const ng = initGame(charData); setG(ng); setPanel(null); setSpeed(0); setConfirmReset(false); const h = ng.settlements.find(s => s.home)!; center(h.x, h.y, 0.55); setNotice("A new blank Chronicle has opened."); };
+  const reset = () => { if (!confirmReset) { setConfirmReset(true); setNotice("Click reset again to confirm — this opens a blank Chronicle and discards the current one."); return; } const ng = initGame(charData); setG(ng); setPanel(null); setSpeed(0); setConfirmReset(false); setNotice("A new blank Chronicle has opened."); };
 
   // auto-dismiss toast after 6 seconds
   useEffect(() => {
@@ -2022,15 +1955,8 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       if (battleSetup || g.evt) return;
       const t = e.target as HTMLElement;
       if ((t.tagName === "INPUT" || t.closest("[data-ui]")) && e.key !== "Escape") return;
-      const cz = camRef.current.z;
       if (e.key === " ") { e.preventDefault(); setSpeed(s => { if (s === 0) return 1; if (s === 1) return 2; if (s === 2) return 4; return 0; }); }
-      if (e.key === "Escape") { setPanel(null); setConfirmReset(false); setBuildMode(false); setPlaceBuildId(null); ghostRef.current = null; }
-      if (e.key === "ArrowLeft" || e.key === "a") setCam(c => ({ ...c, x: cl(c.x - 120 / cz, 0, Math.max(0, W - vp.w / cz)) }));
-      if (e.key === "ArrowRight" || e.key === "d") setCam(c => ({ ...c, x: cl(c.x + 120 / cz, 0, Math.max(0, W - vp.w / cz)) }));
-      if (e.key === "ArrowUp" || e.key === "w") setCam(c => ({ ...c, y: cl(c.y - 120 / cz, 0, Math.max(0, H - vp.h / cz)) }));
-      if (e.key === "ArrowDown" || e.key === "s") setCam(c => ({ ...c, y: cl(c.y + 120 / cz, 0, Math.max(0, H - vp.h / cz)) }));
-      if ((e.key === "+" || e.key === "=") && cz < 3.2) setCam(c => ({ ...c, z: cl(c.z * 1.25, 0.08, 3.2) }));
-      if (e.key === "-" && cz > 0.08) setCam(c => ({ ...c, z: cl(c.z * 0.8, 0.08, 3.2) }));
+      if (e.key === "Escape") { setPanel(null); setConfirmReset(false); }
       // Ctrl+S = save, Ctrl+L = load
       if (e.ctrlKey && e.key === "s") { e.preventDefault(); saveGame(); }
       if (e.ctrlKey && e.key === "l") { e.preventDefault(); loadGame(); }
@@ -2044,58 +1970,16 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [battleSetup, g.evt, vp]);
-
-  /* ── map input ── */
-  const onDown = (e: React.PointerEvent) => { if ((e.target as HTMLElement).closest("[data-ui]")) return; drag.current = { on: true, sx: e.clientX, sy: e.clientY, cx: cam.x, cy: cam.y, moved: false, lastFrame: 0 }; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); };
-  const onMove = (e: React.PointerEvent) => { if (buildMode && placeBuildId) { const r = mapRef.current?.getBoundingClientRect(); if (r) { const wx = cam.x + (e.clientX - r.left) / cam.z; const wy = cam.y + (e.clientY - r.top) / cam.z; ghostRef.current = { x: wx, y: wy }; const now = performance.now(); if (now - ghostTickRef.current > 16) { ghostTickRef.current = now; setGhostRender(n => n + 1); } } } if (!drag.current.on) return; const dx = e.clientX - drag.current.sx, dy = e.clientY - drag.current.sy; if (Math.hypot(dx, dy) > 4) drag.current.moved = true; // Direct DOM transform — bypasses React render for 60fps smooth pan
-      const nz = cam.z;
-      const newX = cl(drag.current.cx - dx / nz, 0, Math.max(0, W - vp.w / nz));
-      const newY = cl(drag.current.cy - dy / nz, 0, Math.max(0, H - vp.h / nz));
-      syncCamTransform(newX, newY, nz);
-      // Throttled React state update for culling/LOD (~10fps)
-      const now = performance.now();
-      if (now - drag.current.lastFrame < 100) return;
-      drag.current.lastFrame = now;
-      setCam(c => ({ ...c, x: newX, y: newY })); };
-  const onUp = (e: React.PointerEvent) => {
-    const wasMoved = drag.current.moved;
-    drag.current.on = false;
-    const onUi = !!(e.target as HTMLElement).closest?.("[data-ui]");
-    const r = mapRef.current?.getBoundingClientRect();
-    if (r && !wasMoved && !onUi) {
-      const wx = cam.x + (e.clientX - r.left) / cam.z;
-      const wy = cam.y + (e.clientY - r.top) / cam.z;
-      if (buildMode && placeBuildId) { placeBuilding(wx, wy); return; }
-      if (buildMode) return; // browsing the build panel — don't hijack the click
-      // click a barony's realm territory to open its panel
-      const bi = baronyIndexAt(g.baronies, wx, wy);
-      if (bi >= 0) pickB(g.baronies[bi]);
-    }
-  };
-  const onWheel = (e: WheelEvent) => { e.preventDefault(); e.stopPropagation(); const r = mapRef.current?.getBoundingClientRect(); if (!r) return; const mx = e.clientX - r.left, my = e.clientY - r.top; const c = camDirectRef.current; const wx = c.x + mx / c.z, wy = c.y + my / c.z; const nz = cl(c.z * (e.deltaY > 0 ? 0.96 : 1.04), 0.08, 3.2); const nx = cl(wx - mx / nz, 0, Math.max(0, W - vp.w / nz)); const ny = cl(wy - my / nz, 0, Math.max(0, H - vp.h / nz)); syncCamTransform(nx, ny, nz); setCam({ z: nz, x: nx, y: ny }); };
-
-  // React attaches wheel as a passive listener, which silently discards preventDefault.
-  // Attach a native non-passive listener so page scroll is blocked while zooming.
-  useEffect(() => {
-    const el = mapRef.current;
-    if (!el) return;
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  });
+  }, [battleSetup, g.evt]);
 
   const toggle = useCallback((p: Panel) => { setConfirmReset(false); setPanel(cur => cur === p ? null : p); }, []);
-  const pickS = useCallback((s: Settlement, focus = false) => { setG(p => ({ ...p, selSid: s.id, selBid: s.bid, selCid: null })); setPanel("Settlement"); if (focus) center(s.x, s.y, 1.1); }, [center]);
-  const pickB = useCallback((b: Barony, focus = false) => { setG(p => ({ ...p, selBid: b.id })); setPanel("Barony"); if (focus) center(b.x, b.y, 0.7); }, [center]);
+  useEffect(() => {
+    if (panel) panelCloseRef.current?.focus();
+  }, [panel]);
+  const pickS = useCallback((s: Settlement) => { setG(p => ({ ...p, selSid: s.id, selBid: s.bid, selCid: null })); setPanel("Settlement"); }, []);
+  const pickB = useCallback((b: Barony) => { setG(p => ({ ...p, selBid: b.id })); setPanel("Barony"); }, []);
   const pickC = useCallback((c: Citizen) => { setG(p => ({ ...p, selCid: c.id, selSid: c.sid })); setPanel("Villager"); }, []);
-  const onMini = useCallback((e: React.MouseEvent<HTMLDivElement>) => { const r = e.currentTarget.getBoundingClientRect(); center((e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H); }, [center]);
-
-  /* ── stable map-marker handlers (kept referentially stable so memoized markers skip re-renders) ── */
-  const onHover = useCallback((h: { x: number; y: number; label: string; sub: string } | null) => setHover(h), []);
-  const onLeave = useCallback(() => setHover(null), []);
-  const onDblCenterS = useCallback((s: Settlement) => center(s.x, s.y, 1.4), [center]);
-  const onDblCenterB = useCallback((b: Barony) => center(b.x, b.y, 0.9), [center]);
-  const onHomeDock = useCallback(() => center(home.x, home.y, 1.2), [center, home]);
+  const onHomeDock = useCallback(() => { setG(p => ({ ...p, selSid: home.id, selBid: home.bid })); setPanel("Settlement"); }, [home]);
 
   const filtChron = useMemo(() => {
     let list = g.chronicle;
@@ -2123,221 +2007,21 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
     return l;
   }, [g]);
 
-  const vW = vp.w / cam.z, vH = vp.h / cam.z;
-  const visible = (x: number, y: number, pad: number) => x > cam.x - pad && x < cam.x + vW + pad && y > cam.y - pad && y < cam.y + vH + pad;
-
-  // Apply charData to customize starting position
-  useEffect(() => {
-    if (!charData) return;
-    const regionMap: Record<RegionChoice, { x: number; y: number }> = {
-      "Forest Valley": { x: 7500, y: 1500 },
-      "Golden Plains": { x: 7500, y: 5000 },
-      "Mountain Highlands": { x: 2300, y: 4700 },
-      "Coastal Bay": { x: 12700, y: 4500 },
-      "River Kingdom": { x: 7500, y: 5000 },
-    };
-    const pos = regionMap[charData.region];
-    center(pos.x, pos.y, 0.55);
-  }, []); // run once on mount
-
-  const LOD = useMemo(() => ({ crests: cam.z < 1.6, settles: cam.z >= 0.12, art: cam.z >= 0.8, people: cam.z >= 0.95, names: cam.z >= 0.18 }), [cam.z]);
-  const visSettles = useMemo(() => g.settlements.filter(s => visible(s.x, s.y, 900)), [g.settlements, cam, vp]); // eslint-disable-line react-hooks/exhaustive-deps
-  const visBaronies = useMemo(() => g.baronies.filter(b => visible(b.x, b.y, 700)), [g.baronies, cam, vp]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  /* thin border lines between neighbouring baronies */
-  // Positions are immutable for a save — key the memo on a position signature so
-  // the reference-churn of the baronies array (drift/relations) never re-computes it.
-  const baronyPosKey = useMemo(() => g.baronies.map(b => `${b.x},${b.y},${b.region}`).join("|"), [g.baronies]);
-  const borders = useMemo(() => {
-    const out: { d: string; col: string; w: number }[] = [];
-    for (let i = 0; i < g.baronies.length; i++) for (let j = i + 1; j < g.baronies.length; j++) {
-      const a = g.baronies[i], b = g.baronies[j];
-      const dist = Math.hypot(a.x - b.x, a.y - b.y);
-      if (dist > 1900) continue;
-      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-      const nx = -(b.y - a.y) / dist, ny = (b.x - a.x) / dist;
-      const half = Math.min(620, dist * 0.42);
-      const wob = ((i * 7 + j * 13) % 90) - 45;
-      const d = `M ${mx - nx * half} ${my - ny * half} Q ${mx + wob} ${my + wob} ${mx + nx * half} ${my + ny * half}`;
-      out.push({ d, col: a.region !== b.region ? "rgba(200,168,78,0.30)" : "rgba(232,220,196,0.13)", w: a.region !== b.region ? 3 : 1.6 });
-    }
-    return out;
-  }, [baronyPosKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const seasonRateMemo = useMemo(() => seasonRate(g), [g.season, g.pop, g.buildings]);
   const seasonPct = (g.day / DAYS_PER_SEASON) * 100;
   const nextSeason = SEASONS[(SEASONS.indexOf(g.season) + 1) % 4];
   const daysToNext = Math.max(0, Math.ceil(DAYS_PER_SEASON - g.day));
 
-  /* ── cheap lookup maps: replace O(n) .find()/.filter() in render ── */
-  const citizensBySid = useMemo(() => {
-    const m = new Map<string, Citizen[]>();
-    for (const c of g.citizens) {
-      const arr = m.get(c.sid);
-      if (arr) arr.push(c); else m.set(c.sid, [c]);
-    }
-    return m;
-  }, [g.citizens]);
-  const roadSegments = useMemo(() => {
-    const out: { key: string; x1: number; y1: number; x2: number; y2: number; stroke: string; width: number; dash: string }[] = [];
-    for (const r of g.roads ?? []) {
-      if (r.level < 2) continue;
-      const a = settlementById.get(r.fromSid);
-      const b2 = settlementById.get(r.toSid);
-      if (!a || !b2) continue;
-      const isGhost = r.decayed;
-      const colors = ["", "", isGhost ? "rgba(140,120,100,0.15)" : "rgba(180,160,120,0.25)", isGhost ? "rgba(140,120,100,0.25)" : "rgba(180,160,120,0.45)"];
-      const widths = [0, 0, isGhost ? 1.5 : 2.5, isGhost ? 2.5 : 4.5];
-      out.push({ key: r.id, x1: a.x, y1: a.y, x2: b2.x, y2: b2.y, stroke: colors[r.level], width: widths[r.level], dash: isGhost ? "6 14" : r.level === 3 ? "none" : "10 8" });
-    }
-    return out;
-  }, [g.roads, settlementById]);
-
   return (
     <main className="relative h-screen w-screen overflow-hidden bg-[#0a0908] text-[#eee4d0]">
-      {/* ════ MAP ════ */}
-      <div ref={mapRef} className={`absolute inset-0 select-none ${drag.current.on ? "cursor-grabbing" : "cursor-grab"}`} style={{ touchAction: "none" }} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
-        {/* Viewport-anchored terrain canvas — a sibling OUTSIDE the camera-transformed
-            container so its internal translate/scale is the single camera (matching the
-            DOM markers). Driven live via camRef at 60fps. */}
-        <RealmMapCanvas atWar={g.atWar} baronies={g.baronies} roads={g.roads ?? []} settlements={g.settlements} camX={cam.x} camY={cam.y} zoom={cam.z} camRef={camDirectRef} exploredHexes={g.exploredHexes} season={g.season} />
-        <div ref={mapInnerRef} className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ width: W, height: H }}>
+      {/* ════ THE CHRONICLE — the living, text-first view of the realm ════ */}
+      <ChronicleView g={g} home={home} baronyById={baronyById} houseName={charData?.houseName ?? "Sheatsley"} bannerIcon={charData?.banner ? (PLAYER_SHIELDS[charData.banner] ?? BANNER_FALLBACK) : BANNER_FALLBACK} rulerPortrait={charData?.portrait} onToggle={toggle} hidden={!!panel} />
 
-          {/* thin barony borders — only rendered when zoomed in enough to see them */}
-          {cam.z > 0.15 && <MapOverlaySvg borders={borders} roads={roadSegments} />}
-
-          {g.caravans.map(caravan => {
-            const target = baronyById.get(caravan.tid);
-            if (!target) return null;
-            const progress = 1 - cl(caravan.days / Math.max(1, caravan.total || 160), 0, 1);
-            const x = home.x + (target.x - home.x) * progress;
-            const y = home.y + (target.y - home.y) * progress;
-            return (
-              <div key={caravan.id} className="pointer-events-none absolute" style={{ left: x, top: y, zIndex: 22 }}>
-                <div className="-translate-x-1/2 -translate-y-1/2 rounded-full bg-[#c8a84e] px-1.5 py-0.5 shadow-lg ring-2 ring-black/50"><GameIcon uri={UI_ICONS.caravan} size={12} tile={false} /></div>
-                <div className="mt-1 -translate-x-1/2 whitespace-nowrap rounded bg-black/75 px-1.5 py-0.5 text-[9px] text-[#eee4d0]">{Math.ceil(caravan.days)}d</div>
-              </div>
-            );
-          })}
-
-          {/* marching armies */}
-          {(g.armies ?? []).filter(a => visible(a.x, a.y, 200)).map(a => {
-            const mine = a.ownerId === "player";
-            return (
-              <div key={a.id} className="pointer-events-none absolute" style={{ left: a.x, top: a.y, zIndex: 23 }}>
-                <div className="-translate-x-1/2 -translate-y-1/2">
-                  <div className={`flex h-9 w-9 items-center justify-center rounded-full shadow-lg ring-2 ${mine ? "bg-[#c8a84e] ring-[#c8a84e]/70" : "bg-red-950 ring-red-400/50"}`} style={{ boxShadow: mine ? "0 0 22px rgba(200,168,78,0.7)" : "0 0 22px rgba(220,38,38,0.5)" }}>
-                    <GameIcon uri={mine ? UNIT_ICONS.knights : ACTION_ICONS.raid} size={20} tile={false} />
-                  </div>
-                  <div className="mt-0.5 -translate-x-1/2 whitespace-nowrap rounded bg-black/75 px-1.5 py-0.5 text-[9px] font-semibold text-[#eee4d0]">{armySize(a.comp)} <span className="opacity-70">men</span></div>
-                  {a.task !== "guard" && <div className="mt-0.5 -translate-x-1/2 whitespace-nowrap rounded bg-black/60 px-1.5 py-0.5 text-[8px] capitalize text-[#bbb5a0]">{a.task}{a.task === "siege" ? ` ${Math.round(a.siegeProgress)}%` : a.daysLeft > 0 ? ` · ${a.daysLeft}d` : ""}</div>}
-                </div>
-              </div>
-            );
-          })}
-
-          {/* region names */}
-          {(Object.keys(RC) as Region[]).map(r => (
-            <div key={r} className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 whitespace-nowrap font-semibold uppercase" style={{ left: RC[r].x, top: RC[r].y - 1150, color: `${RCOL[r]}66`, fontSize: 120, letterSpacing: "0.4em", textShadow: "0 6px 30px rgba(0,0,0,.8)" }}>{r}</div>
-          ))}
-
-          {/* settlement artwork */}
-          {visSettles.filter(s => LOD.art || s.id === g.selSid).map(s => (
-            <SettlementArt key={`art-${s.id}`} s={s} house={baronyById.get(s.bid)?.house ?? ""} selected={g.selSid === s.id} season={g.season} onPick={pickS} onDbl={onDblCenterS} onHover={onHover} onLeave={onLeave} />
-          ))}
-
-          {/* villagers – CSS orbit on the outer streets, never over the building core — capped at 8 per settlement to prevent animation overload */}
-          {LOD.people && visSettles.map(s => {
-            const cits = citizensBySid.get(s.id) ?? [];
-            return cits.slice(0, 8).map(c => (
-              <CitizenOrbit key={c.id} c={c} sx={s.x} sy={s.y} selected={g.selCid === c.id} season={g.season} tunic={OCC_STYLE[c.occ]?.tunic ?? "#666"} onPick={pickC} onHover={onHover} onLeave={onLeave} />
-            ));
-          })}
-
-          {/* settlement markers — the home seat's art card replaces its marker pin
-              whenever the card is on screen, so nothing floats disconnected above it */}
-          {LOD.settles && visSettles.map(s => (
-            s.home && (LOD.art || g.selSid === s.id)
-              ? null
-              : <SettlementMarker key={s.id} s={s} house={baronyById.get(s.bid)?.house ?? ""} selected={g.selSid === s.id}
-              showName={LOD.names} yOffset={(LOD.art || g.selSid === s.id) ? sArt(s.type, s.home) * 0.30 : 0}
-              nameFont={Math.max(11, 13 / Math.max(cam.z, .35))} onPick={pickS} onDbl={onDblCenterS} onHover={onHover} onLeave={onLeave} />
-          ))}
-
-          {/* barony crests */}
-          {LOD.crests && visBaronies.map(b => (
-            <BaronyCrest key={b.id} b={b} selected={g.selBid === b.id} size={cam.z < 0.2 ? 120 : cam.z < 0.5 ? 70 : 46}
-              topOffset={cam.z < 0.5 ? 0 : 420} allied={g.alliances.some(a => a.bid === b.id)} atWar={g.atWar.includes(b.id)}
-              crestUri={BANNER_URI[b.banner] ?? (b.banner.startsWith("data:") ? b.banner : BANNER_FALLBACK)}
-              onPick={pickB} onDbl={onDblCenterB} onHover={onHover} onLeave={onLeave} />
-          ))}
-
-          {/* placed buildings */}
-          {g.placedBuildings.filter(pb => visible(pb.x, pb.y, 200)).map(pb => (
-            <BuildingMarker key={pb.id} pb={pb} icon={BUILD_ICONS[pb.buildId] ?? BUILDING_FALLBACK} radius={BUILD_PLACE_RADIUS[pb.buildId] ?? 70} onRemove={removeBuilding} />
-          ))}
-
-          {/* ghost placement preview */}
-          {buildMode && placeBuildId && ghostRef.current && (() => {
-            const gp = ghostRef.current!;
-            const bt = BUILDS.find(b => b.id === placeBuildId);
-            if (!bt) return null;
-            const icon = BUILD_ICONS[bt.id] ?? BUILDING_FALLBACK;
-            const radius = BUILD_PLACE_RADIUS[bt.id] ?? 70;
-            const sett = settlementById.get(g.selSid);
-            const dist = sett ? Math.hypot(gp.x - sett.x, gp.y - sett.y) : 9999;
-            const maxDist = sett ? sArt(sett.type, sett.home) * 0.6 : 0;
-            const inRange = dist <= maxDist;
-            const occupied = g.placedBuildings.filter(pb => pb.sid === g.selSid);
-            let overlap = false;
-            for (const pb of occupied) {
-              if (Math.hypot(pb.x - gp.x, pb.y - gp.y) < (BUILD_PLACE_RADIUS[pb.buildId] ?? 70) + radius - 20) { overlap = true; break; }
-            }
-            const valid = inRange && !overlap;
-            return (
-              <div className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2" style={{ left: gp.x, top: gp.y, zIndex: 25 }}>
-                <div className="grid place-items-center rounded-xl border-2 border-dashed transition-all duration-75" style={{ width: radius * 0.7, height: radius * 0.7, borderColor: valid ? "rgba(74,222,128,0.7)" : "rgba(239,68,68,0.7)", background: valid ? "rgba(74,222,128,0.1)" : "rgba(239,68,68,0.1)" }}>
-                  <GameIcon uri={icon} size={radius * 0.42} />
-                </div>
-                <span className="block -translate-x-1/2 whitespace-nowrap text-center text-[9px] font-semibold" style={{ left: "50%", position: "relative", color: valid ? "#4ade80" : "#ef4444" }}>{valid ? bt.name : overlap ? "Blocked" : "Out of range"}</span>
-              </div>
-            );
-          })()}
-
-          {/* hover tooltip */}
-          {hover && (
-            <div className="pointer-events-none absolute -translate-x-1/2 rounded-xl bg-black/85 px-3 py-1.5 shadow-2xl ring-1 ring-[#c8a84e]/30" style={{ left: hover.x, top: hover.y + 30, zIndex: 30 }}>
-              <p className="whitespace-nowrap font-semibold text-[#c8a84e]" style={{ fontSize: Math.max(12, 15 / Math.max(cam.z, .35)) }}>{hover.label}</p>
-              <p className="whitespace-nowrap capitalize text-[#bbb5a0]" style={{ fontSize: Math.max(10, 12 / Math.max(cam.z, .35)) }}>{hover.sub}</p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {!mapReady && (
-        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-[#0a0908]">
-          <div className="rounded-2xl border border-[#c8a84e]/25 bg-[#0e0d0b]/90 px-8 py-8 text-center shadow-2xl">
-            {/* Shimmer loading skeleton */}
-            <div className="relative mx-auto mb-5 h-48 w-64 overflow-hidden rounded-xl bg-white/5">
-              <div className="absolute inset-0 -translate-x-full animate-[shimmer_2s_infinite] bg-gradient-to-r from-transparent via-white/8 to-transparent" />
-              <div className="absolute inset-0 flex items-center justify-center"><GameIcon uri={SETTLEMENT_ICONS.city} size={64} tile={false} /></div>
-            </div>
-            <div className="space-y-2">
-              <div className="mx-auto h-3 w-40 overflow-hidden rounded-full bg-white/8"><div className="h-full animate-pulse rounded-full bg-[#c8a84e]/40" style={{ width: '65%' }} /></div>
-              <div className="mx-auto h-2 w-28 overflow-hidden rounded-full bg-white/5"><div className="h-full animate-pulse rounded-full bg-white/10" style={{ width: '45%' }} /></div>
-            </div>
-            <div className="mx-auto mt-4 h-5 w-5 animate-spin rounded-full border-2 border-white/15 border-t-[#c8a84e]" />
-            <p className="mt-3 text-[13px] font-semibold text-[#c8a84e]">Opening the Realm</p>
-            <p className="mt-1 text-[10px] text-[#8d8674]">Preparing the map and settlements…</p>
-            <p className="mt-3 text-[9px] text-[#8d8674]/50">Press Space to pause · Arrow keys to pan · Scroll to zoom</p>
-          </div>
-        </div>
-      )}
-
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/55 via-transparent to-black/45" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/45 via-transparent to-black/45" />
 
       {/* ════ TOP BAR ════ */}
-      <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 p-3">
+      <header aria-hidden={panel !== null} inert={panel !== null} className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 p-3">
         <button data-ui="1" onClick={() => toggle("House")} className="ck-panel pointer-events-auto flex items-center gap-3 rounded-2xl py-2 pl-2 pr-5 transition hover:brightness-110">
           <span className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-[#a43a39] to-[#4b1219] ring-1 ring-[#c8a84e]/40"><GameIcon uri={charData?.banner ? (PLAYER_SHIELDS[charData.banner] ?? BANNER_FALLBACK) : BANNER_FALLBACK} size={28} tile={false} /></span>
           <span className="text-left">
@@ -2392,79 +2076,92 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       </header>
 
       {/* ════ DOCK ════ */}
-      <Dock panel={panel} rank={g.rank} onToggle={toggle} onHome={onHomeDock} />
+      <Dock panel={panel} rank={g.rank} onToggle={toggle} onHome={onHomeDock} disabled={panel !== null} />
 
       <div key={notice} className="fade-in-up pointer-events-none absolute bottom-[74px] left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/55 px-5 py-1.5 text-center text-[11px] text-[#eee4d0]/85 backdrop-blur">{notice}</div>
 
-      {/* ════ MINIMAP ════ */}
-      <div data-ui="1" className="absolute bottom-4 right-4 z-30 w-52 rounded-2xl border border-white/8 bg-[#0e0d0b]/88 p-2 shadow-xl backdrop-blur-xl">
-        <div className="mb-1 flex justify-between px-0.5 text-[9px] uppercase tracking-wider text-[#8d8674]"><span>The Realm</span><span>{Math.round(cam.z * 100)}%</span></div>
-        <div className="relative h-32 w-full cursor-crosshair overflow-hidden rounded-lg" onClick={onMini}>
-          <div className="absolute inset-0 opacity-55"><RealmMapCanvas atWar={g.atWar} baronies={g.baronies} roads={g.roads ?? []} settlements={g.settlements} camX={0} camY={0} zoom={1} staticMode exploredHexes={g.exploredHexes} /></div>
-          <MinimapDots baronies={g.baronies} atWar={g.atWar} alliances={g.alliances} />
-          <span className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#c8a84e] bg-[#6b1f1f]" style={{ left: `${home.x / W * 100}%`, top: `${home.y / H * 100}%` }} />
-          <div className="absolute border-2 border-[#c8a84e]/90 bg-[#c8a84e]/10" style={{ left: `${cam.x / W * 100}%`, top: `${cam.y / H * 100}%`, width: `${Math.min(100, vW / W * 100)}%`, height: `${Math.min(100, vH / H * 100)}%` }} />
-        </div>
-        <div className="mt-1.5 flex gap-1 text-[10px]">
-          <button onClick={() => setCam(c => ({ ...c, z: cl(c.z * 1.1, 0.08, 3.2) }))} className="flex-1 rounded-md bg-white/6 py-1 hover:bg-white/12">Zoom +</button>
-          <button onClick={() => setCam(c => ({ ...c, z: cl(c.z * 0.91, 0.08, 3.2) }))} className="flex-1 rounded-md bg-white/6 py-1 hover:bg-white/12">Zoom −</button>
-          <button onClick={() => center(W / 2, H / 2, 0.09)} className="flex-1 rounded-md bg-white/6 py-1 hover:bg-white/12">All</button>
-        </div>
-      </div>
-
       {/* toast */}
       {g.toast && (
-        <div data-ui="1" className="toast-enter absolute bottom-24 left-4 z-30 w-72 rounded-2xl border border-white/8 bg-[#0e0d0b]/93 p-3 shadow-xl backdrop-blur-xl">
+        <div data-ui="1" aria-hidden={panel !== null} inert={panel !== null} className="toast-enter absolute bottom-24 left-4 z-30 w-72 rounded-2xl border border-white/8 bg-[#0e0d0b]/93 p-3 shadow-xl backdrop-blur-xl">
           <div className="flex gap-2"><img src={g.toast.portrait} alt="" className="h-11 w-9 rounded-lg object-cover" /><div><p className="text-[12px] font-semibold text-[#c8a84e]">{g.toast.title}</p><p className="text-[11px] text-[#bbb5a0]">{g.toast.body}</p></div></div>
           <div className="mt-2 flex gap-1"><button onClick={() => toggle("Family")} className="btn-press flex-1 rounded-lg bg-[#c8a84e] py-1.5 text-[11px] font-semibold text-[#1a1611] transition hover:brightness-110">View</button><button onClick={() => setG(p => ({ ...p, toast: null }))} className="btn-press rounded-lg bg-white/6 px-3 text-[11px] transition hover:bg-white/12">✕</button></div>
         </div>
       )}
 
-      {/* ════ DRAWER ════ */}
+      {/* ════ FULL-SCREEN PANEL ════ */}
       {panel && (
-        <div data-ui="1" className="drawer absolute bottom-[74px] left-1/2 z-40 max-h-[58vh] w-[min(1020px,calc(100vw-250px))] -translate-x-1/2 overflow-auto rounded-3xl border border-white/8 bg-[#0e0d0b]/95 p-6 shadow-[0_24px_80px_rgba(0,0,0,.65)] backdrop-blur-2xl">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-[15px] font-semibold tracking-wide text-[#c8a84e]">{panel === "House" ? `House ${charData?.houseName ?? "Sheatsley"}` : panel === "Trade" ? "Trade & Alliances" : panel === "Realm" ? "Realm Directory" : panel}</h2>
-            <button onClick={() => setPanel(null)} className="rounded-full bg-white/6 px-3 py-1 text-[11px] hover:bg-white/12">✕</button>
+        <div data-ui="1" role="dialog" aria-modal="true" aria-labelledby="panel-title" className="absolute inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-[#0a0908]/98 backdrop-blur-sm animate-[panelSlideUp_0.2s_cubic-bezier(0.16,1,0.3,1)]">
+          {/* Persistent top header bar on the panel */}
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-white/8 px-4 py-3 sm:px-6 sm:py-4">
+            <div className="flex items-center gap-4">
+              <button onClick={() => setPanel(null)} className="btn-press grid h-9 w-9 place-items-center rounded-xl border border-white/12 bg-white/5 text-[15px] leading-none text-[#8d8674] transition hover:border-[#c8a84e]/40 hover:text-[#c8a84e]">←</button>
+              <h2 id="panel-title" className="truncate text-[16px] font-semibold tracking-wide text-[#c8a84e]">
+                {panel === "House" ? `House ${charData?.houseName ?? "Sheatsley"}` :
+                 panel === "Trade" ? "Trade & Alliances" :
+                 panel === "Realm" ? "Realm Directory" :
+                 panel === "Settlement" ? `${selS.name}` :
+                 panel === "Build" ? "Buildings of Hearthmere" :
+                 panel === "Council" ? "Council Chamber" :
+                 panel === "Factions" ? "Factions & Faction Reputation" :
+                 panel === "Resources" ? "Resource Ledgers" :
+                 panel === "Training" ? "Military Training" :
+                 panel === "Faith" ? "The Six Pillars" :
+                 panel === "War" ? "War Council" :
+                 panel === "Crown" ? "The Crown Court" :
+                 panel === "Chronicle" ? "Chronicle" :
+                 panel === "Barony" ? `${selB.name}` :
+                 panel === "Villager" && selC ? selC.name :
+                 panel}</h2>
+            </div>
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-2 text-[11px] text-[#8d8674]">
+              <span>Year {g.year} · {g.season}</span>
+              <span className="h-4 w-px bg-white/10" />
+              <span>{g.rank}</span>
+              <span className="h-4 w-px bg-white/10" />
+              <button ref={panelCloseRef} onClick={() => setPanel(null)} className="btn-press rounded-full bg-white/6 px-4 py-1.5 text-[11px] font-semibold text-[#eee4d0] hover:bg-white/12">✕ Close</button>
+            </div>
+          </div>
+          <div aria-live="polite" className="shrink-0 border-b border-[#c8a84e]/10 bg-[#c8a84e]/[0.04] px-4 py-2 text-center text-[11px] text-[#c8a84e] sm:px-6">
+            {notice}
           </div>
 
-          {panel === "House" && <HousePanel g={g} living={living} center={center} home={home} setPanel={setPanel} houseName={charData?.houseName ?? "Sheatsley"} bannerIcon={charData?.banner ? (PLAYER_SHIELDS[charData.banner] ?? BANNER_FALLBACK) : BANNER_FALLBACK} rulerPortrait={charData?.portrait} />}
-          {panel === "Family" && <div className="flex gap-3 overflow-x-auto pb-2">{g.family.map((m, i) => <div key={m.id} className={`w-32 shrink-0 rounded-2xl border p-3 text-center ${m.status === "Dead" ? "border-white/5 opacity-50" : "border-white/8 bg-white/3"}`}><img src={portrait(m, i, charData?.portrait)} alt={m.name} className="mx-auto h-16 w-14 rounded-lg object-cover" onError={(e) => { (e.target as HTMLImageElement).src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='64'%3E%3Crect fill='%233a2a1a' width='56' height='64' rx='8'/%3E%3Ctext x='28' y='42' text-anchor='middle' fill='%23c8a84e' font-size='24' font-family='sans-serif'%3E${encodeURIComponent(m.name.split(" ")[0][0])}%3C/text%3E%3C/svg%3E`; }} /><p className="mt-1 text-[12px] font-semibold">{m.name}</p><p className="text-[10px] text-[#bbb5a0]">{m.role}</p><p className="text-[10px] text-[#c8a84e]">{m.status === "Dead" ? "Deceased" : `Age ${m.age}`}</p></div>)}<div className="flex w-32 shrink-0 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 text-[11px] text-[#8d8674]"><span className="text-xl">?</span>continues…</div></div>}
-          {panel === "Citizens" && <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{g.citizens.filter(c => c.sid === home.id).map(c => { const st = OCC_STYLE[c.occ]; return <button key={c.id} onClick={() => { pickC(c); center(home.x, home.y, 1.3); }} className="flex items-center gap-2 rounded-xl bg-white/3 px-3 py-2 text-left transition hover:bg-white/7"><span className="grid h-7 w-7 place-items-center rounded-full" style={{ background: shiftHex(st?.tunic ?? "#666", SEASON_WEAR[g.season].tunicDelta) }}><GameIcon uri={st?.tool} size={16} tile={false} /></span><span><span className="block text-[12px] font-medium">{c.name}</span><span className="text-[10px] text-[#bbb5a0]">{c.occ} · {c.age}</span></span></button>; })}</div>}
-          {panel === "Alerts" && <div className="grid gap-6 md:grid-cols-2"><div><h3 className="mb-2 text-[11px] uppercase tracking-wider text-[#c8a84e]">Alerts</h3><ul className="space-y-1 text-[12px]">{alerts.map(a => <li key={a} className="rounded-xl bg-white/3 px-3 py-2">• {a}</li>)}</ul></div><div><h3 className="mb-2 text-[11px] uppercase tracking-wider text-[#c8a84e]">Recent</h3><ul className="space-y-1 text-[12px]">{g.chronicle.slice(0, 7).map(e => <li key={e.id} className="rounded-xl bg-white/3 px-3 py-2"><strong className="text-[#c8a84e]">{e.title}</strong> <span className="text-[#bbb5a0]">{e.text}</span></li>)}</ul></div></div>}
-          {panel === "Build" && <div>
-            <div className="mb-3 flex items-center gap-2">
-              <button onClick={() => { setBuildMode(!buildMode); setPlaceBuildId(null); ghostRef.current = null; }} className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-[12px] font-semibold transition ${buildMode ? "bg-[#c8a84e] text-[#1a1611]" : "bg-white/6 text-[#eee4d0] hover:bg-white/12"}`}><GameIcon uri={UI_ICONS.map} size={14} tile={false} />{buildMode ? "Exit Map Mode" : "Place on Map"}</button>
-              {buildMode && <span className="text-[11px] text-[#8d8674]">Select a building below, then click the map near your settlement to place it.</span>}
+          {/* Scrollable content fills remaining height */}
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-10 sm:py-6 lg:px-16">
+            <div className="mx-auto w-full max-w-5xl">
+              {panel === "House" && <HousePanel g={g} living={living} home={home} setPanel={setPanel} houseName={charData?.houseName ?? "Sheatsley"} bannerIcon={charData?.banner ? (PLAYER_SHIELDS[charData.banner] ?? BANNER_FALLBACK) : BANNER_FALLBACK} rulerPortrait={charData?.portrait} />}
+              {panel === "Family" && <div className="flex gap-3 overflow-x-auto pb-2">{g.family.map((m, i) => <div key={m.id} className={`w-32 shrink-0 rounded-2xl border p-3 text-center ${m.status === "Dead" ? "border-white/5 opacity-50" : "border-white/8 bg-white/3"}`}><img src={portrait(m, i, charData?.portrait)} alt={m.name} className="mx-auto h-16 w-14 rounded-lg object-cover" onError={(e) => { (e.target as HTMLImageElement).src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='64'%3E%3Crect fill='%233a2a1a' width='56' height='64' rx='8'/%3E%3Ctext x='28' y='42' text-anchor='middle' fill='%23c8a84e' font-size='24' font-family='sans-serif'%3E${encodeURIComponent(m.name.split(" ")[0][0])}%3C/text%3E%3C/svg%3E`; }} /><p className="mt-1 text-[12px] font-semibold">{m.name}</p><p className="text-[10px] text-[#bbb5a0]">{m.role}</p><p className="text-[10px] text-[#c8a84e]">{m.status === "Dead" ? "Deceased" : `Age ${m.age}`}</p></div>)}<div className="flex w-32 shrink-0 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 text-[11px] text-[#8d8674]"><span className="text-xl">?</span>continues…</div></div>}
+              {panel === "Citizens" && <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{g.citizens.filter(c => c.sid === home.id).map(c => { const st = OCC_STYLE[c.occ]; return <button key={c.id} onClick={() => pickC(c)} className="flex items-center gap-2 rounded-xl bg-white/3 px-3 py-2 text-left transition hover:bg-white/7"><span className="grid h-7 w-7 place-items-center rounded-full" style={{ background: shiftHex(st?.tunic ?? "#666", SEASON_WEAR[g.season].tunicDelta) }}><GameIcon uri={st?.tool} size={16} tile={false} /></span><span><span className="block text-[12px] font-medium">{c.name}</span><span className="text-[10px] text-[#bbb5a0]">{c.occ} · {c.age}</span></span></button>; })}</div>}
+              {panel === "Alerts" && <div className="grid gap-6 md:grid-cols-2"><div><h3 className="mb-2 text-[11px] uppercase tracking-wider text-[#c8a84e]">Alerts</h3><ul className="space-y-1 text-[12px]">{alerts.map(a => <li key={a} className="rounded-xl bg-white/3 px-3 py-2">• {a}</li>)}</ul></div><div><h3 className="mb-2 text-[11px] uppercase tracking-wider text-[#c8a84e]">Recent</h3><ul className="space-y-1 text-[12px]">{g.chronicle.slice(0, 7).map(e => <li key={e.id} className="rounded-xl bg-white/3 px-3 py-2"><strong className="text-[#c8a84e]">{e.title}</strong> <span className="text-[#bbb5a0]">{e.text}</span></li>)}</ul></div></div>}
+              {panel === "Build" && <div>
+                <div className="mb-3 flex items-center gap-2"><span className="text-[11px] text-[#8d8674]">Raise and improve the buildings of Hearthmere — each level deepens its craft, yield, and reach. Buildings are founded directly in the settlement.</span></div>
+                <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">{BUILDS.map(t => { const ex = buildingById.get(t.id); const lv = ex?.level ?? 0; const nxt = lv + 1; const sc = Object.fromEntries(Object.entries(t.cost).map(([k, v]) => [k, Math.ceil((v ?? 0) * nxt)])) as Partial<Res>; const aff = afford(g.res, sc); return <button key={t.id} onClick={() => build(t)} className={`rounded-2xl border p-3 text-left transition ${aff ? "border-white/6 bg-white/3 hover:bg-white/7" : "border-red-400/15 bg-red-950/10 opacity-60"}`}><div className="flex justify-between"><span className="flex items-center gap-1.5 text-[13px] font-semibold"><GameIcon uri={BUILD_ICONS[t.id] ?? BUILDING_FALLBACK} size={16} />{t.name}</span><span className="rounded-full bg-[#c8a84e]/20 px-2 text-[10px] text-[#c8a84e]">Lv {lv}</span></div><p className="mt-1 text-[11px] text-[#bbb5a0]">{t.desc}</p><p className="mt-1 text-[10px] text-emerald-400">Lv {nxt}: {fmtD(t.prod)}</p><p className={`mt-1 text-[10px] ${aff ? "text-[#c8a84e]" : "text-red-400"}`}>Cost: {fmtD(sc)}</p></button>; })}</div>
+              </div>}
+              {panel === "Training" && <div className="grid gap-3 md:grid-cols-3"><AC t="Muster Militia" b="Drill defenders with food, weapons and silver." bt="Train" fn={trainAct} /><AC t="Tactical Doctrine" b={`Doctrine favours ${g.ruler.path}.`} bt="Study" fn={trainAct} /><AC t="Border Watch" b="Post rangers to track rival movements." bt="Post" fn={trainAct} /></div>}
+              {panel === "Council" && <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4"><AC t="Merciful Judgment" b="Raise trust, reduce fear." bt="Judge" fn={() => council("mercy")} /><AC t="Open Trade" b="Invite merchants and foreign coin." bt="Invite" fn={() => council("trade")} /><AC t="Honour Old Faith" b="Strengthen tradition." bt="Gather" fn={() => council("tradition")} /><AC t="Send Envoys" b="Improve relations broadly." bt="Dispatch" fn={() => council("envoys")} /><AC t={`Propose Marriage to ${selB.house}`} b="Seal a betrothal alliance. 30 silver, 15+ relations." bt={<span className="flex items-center justify-center gap-1.5"><GameIcon uri={ACTION_ICONS.betrothal} size={13} tile={false} />Propose</span>} fn={() => proposeBetrothal(selB.id)} /><BetrothalPanel g={g} />
+                <div className="col-span-full border-t border-white/8 pt-3">
+                  <p className="mb-2 text-[10px] uppercase tracking-wider text-[#c8a84e]">Invoke the Six Pillars</p>
+                  <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                    {DEITY_IDS.map(d => {
+                      const info = DEITY_INFO[d];
+                      const isPatron = PATH_DEITY[g.ruler.path] === d;
+                      return <AC key={d} t={<span className="flex items-center gap-1.5"><GameIcon uri={info.icon} size={14} />{info.name}{isPatron ? " ★" : ""}</span>} b={`Invoke ${info.name} — ${info.domain}.`} bt="Invoke" fn={() => councilFaith(d)} />;
+                    })}
+                  </div>
+                  <p className="mt-2 text-[9px] text-[#8d8674]">★ marks your patron pillar — invoking it deepens your house's bond.</p>
+                </div></div>}
+              {panel === "Resources" && <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7">{(Object.entries(g.res) as [RN, number][]).map(([k, v]) => { const liveRate = seasonRateMemo[k] ?? 0; return <div key={k} title={`${liveRate >= 0 ? "+" : ""}${liveRate.toFixed(1)} per season. ${k} is used for buildings, trade, and survival.`} className="rounded-2xl bg-white/3 p-3"><p className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[#8d8674]"><GameIcon uri={RICONS[k]} size={14} />{k}</p><p className="text-xl font-bold tabular-nums">{Math.floor(v)}</p><p className={`text-[10px] tabular-nums ${liveRate >= 0 ? "text-emerald-400" : "text-red-400"}`}>{liveRate >= 0 ? "+" : ""}{liveRate.toFixed(1)}/season</p></div>; })}</div>}
+              {panel === "Chronicle" && <div><input value={cSearch} onChange={e => setCSearch(e.target.value)} placeholder="Search the Chronicle…" className="mb-3 w-full rounded-full border border-white/8 bg-white/4 px-4 py-2 text-[12px] outline-none placeholder:text-white/25 focus:border-[#c8a84e]/40" /><div className="mb-2 flex flex-wrap gap-1">{(["all","hope","glory","grief","warning","trade","faith"] as const).map(tone => <button key={tone} onClick={() => setCTone(tone)} className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition ${cTone === tone ? "bg-[#c8a84e] text-[#1a1611]" : "bg-white/6 hover:bg-white/10"}`}>{tone === "all" ? "All" : tone}</button>)}</div><div className="space-y-1.5 text-[12px]">{filtChron.slice(0, 200).map(e => <div key={e.id} className="rounded-xl bg-white/3 px-3 py-2"><span className="mr-2 text-[10px] text-[#8d8674]">Y{e.year} {e.season}</span><strong className="text-[#c8a84e]">{e.title}</strong> <span className="text-[#bbb5a0]">{e.text}</span></div>)}</div></div>}
+              {panel === "Realm" && <RealmPanel g={g} search={rSearch} setSearch={setRSearch} pickB={pickB} />}
+              {panel === "Trade" && <TradePanel g={g} selB={selB} send={sendCaravan} dip={dipAction} baronyById={baronyById} />}
+              {panel === "War" && <WarPanel g={g} selB={selB} recruit={recruit} recruitRoyalGuard={recruitRoyalGuard} assignCpt={assignCpt} raise={raiseArmy} recall={recallArmy} disband={disbandArmy} assault={assaultSiege} dip={dipAction} />}
+              {panel === "Settlement" && <SettPanel s={selS} b={selB} g={g} setPanel={setPanel} />}
+              {panel === "Barony" && <BarPanel b={selB} g={g} pickS={pickS} setPanel={setPanel} />}
+              {panel === "Villager" && selC && <VillPanel c={selC} g={g} tab={cTab} setTab={setCTab} settlementById={settlementById} />}
+              {panel === "Crown" && <CrownPanel g={g} grantTitle={grantTitle} resolveCrisis={resolveCrownCrisis} recruitRoyalGuard={recruitRoyalGuard} baronyById={baronyById} />}
+              {panel === "Factions" && <FactionRepPanel g={g} home={home} baronyById={baronyById} />}
+              {panel === "Faith" && <FaithPanel g={g} worship={worship} councilFaith={councilFaith} rulerPath={g.ruler.path} />}
             </div>
-            {buildMode && placeBuildId && <div className="mb-3 flex items-center gap-2"><span className="text-[11px] text-[#c8a84e]">Placing: <strong>{BUILDS.find(b => b.id === placeBuildId)?.name}</strong></span><button onClick={() => { setPlaceBuildId(null); ghostRef.current = null; }} className="rounded-lg bg-white/6 px-2 py-1 text-[10px] hover:bg-white/12">Cancel</button></div>}
-            <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">{BUILDS.map(t => { const ex = buildingById.get(t.id); const lv = ex?.level ?? 0; const nxt = lv + 1; const sc = Object.fromEntries(Object.entries(t.cost).map(([k, v]) => [k, Math.ceil((v ?? 0) * nxt)])) as Partial<Res>; const aff = afford(g.res, sc); const isSelected = buildMode && placeBuildId === t.id; return <button key={t.id} onClick={() => { if (buildMode) { setPlaceBuildId(t.id); ghostRef.current = null; } else { build(t); } }} className={`rounded-2xl border p-3 text-left transition ${isSelected ? "border-[#c8a84e] bg-[#c8a84e]/15 ring-1 ring-[#c8a84e]/40" : aff ? "border-white/6 bg-white/3 hover:bg-white/7" : "border-red-400/15 bg-red-950/10 opacity-60"}`}><div className="flex justify-between"><span className="flex items-center gap-1.5 text-[13px] font-semibold"><GameIcon uri={BUILD_ICONS[t.id] ?? BUILDING_FALLBACK} size={16} />{t.name}</span><span className="rounded-full bg-[#c8a84e]/20 px-2 text-[10px] text-[#c8a84e]">Lv {lv}</span></div><p className="mt-1 text-[11px] text-[#bbb5a0]">{t.desc}</p><p className="mt-1 text-[10px] text-emerald-400">Lv {nxt}: {fmtD(t.prod)}</p><p className={`mt-1 text-[10px] ${aff ? "text-[#c8a84e]" : "text-red-400"}`}>Cost: {fmtD(sc)}</p>{buildMode && <p className="mt-1 text-[9px] text-[#8d8674]">Click to select → place on map</p>}</button>; })}</div>
-            {!buildMode && g.placedBuildings.filter(pb => pb.sid === g.selSid).length > 0 && <div className="mt-4 border-t border-white/8 pt-3"><p className="mb-2 text-[11px] uppercase tracking-wider text-[#8d8674]">Placed Buildings ({g.placedBuildings.filter(pb => pb.sid === g.selSid).length})</p><div className="flex flex-wrap gap-2">{g.placedBuildings.filter(pb => pb.sid === g.selSid).map(pb => <div key={pb.id} className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-[11px]"><GameIcon uri={BUILD_ICONS[pb.buildId] ?? BUILDING_FALLBACK} size={14} /><span className="font-medium">{pb.name}</span><span className="text-[10px] text-[#8d8674]">Lv {pb.level}</span><button onClick={() => removeBuilding(pb.id)} className="ml-1 rounded-full bg-red-900/50 px-1.5 py-0.5 text-[9px] text-red-200 hover:bg-red-800/50">✕</button></div>)}</div></div>}
-          </div>}
-          {panel === "Training" && <div className="grid gap-3 md:grid-cols-3"><AC t="Muster Militia" b="Drill defenders with food, weapons and silver." bt="Train" fn={trainAct} /><AC t="Tactical Doctrine" b={`Doctrine favours ${g.ruler.path}.`} bt="Study" fn={trainAct} /><AC t="Border Watch" b="Post rangers to track rival movements." bt="Post" fn={trainAct} /></div>}
-          {panel === "Council" && <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4"><AC t="Merciful Judgment" b="Raise trust, reduce fear." bt="Judge" fn={() => council("mercy")} /><AC t="Open Trade" b="Invite merchants and foreign coin." bt="Invite" fn={() => council("trade")} /><AC t="Honour Old Faith" b="Strengthen tradition." bt="Gather" fn={() => council("tradition")} /><AC t="Send Envoys" b="Improve relations broadly." bt="Dispatch" fn={() => council("envoys")} /><AC t={`Propose Marriage to ${selB.house}`} b="Seal a betrothal alliance. 30 silver, 15+ relations." bt={<span className="flex items-center justify-center gap-1.5"><GameIcon uri={ACTION_ICONS.betrothal} size={13} tile={false} />Propose</span>} fn={() => proposeBetrothal(selB.id)} /><BetrothalPanel g={g} />
-            <div className="col-span-full border-t border-white/8 pt-3">
-              <p className="mb-2 text-[10px] uppercase tracking-wider text-[#c8a84e]">Invoke the Six Pillars</p>
-              <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                {DEITY_IDS.map(d => {
-                  const info = DEITY_INFO[d];
-                  const isPatron = PATH_DEITY[g.ruler.path] === d;
-                  return <AC key={d} t={<span className="flex items-center gap-1.5"><GameIcon uri={info.icon} size={14} />{info.name}{isPatron ? " ★" : ""}</span>} b={`Invoke ${info.name} — ${info.domain}.`} bt="Invoke" fn={() => councilFaith(d)} />;
-                })}
-              </div>
-              <p className="mt-2 text-[9px] text-[#8d8674]">★ marks your patron pillar — invoking it deepens your house's bond.</p>
-            </div></div>}
-          {panel === "Resources" && <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7">{(Object.entries(g.res) as [RN, number][]).map(([k, v]) => { const liveRate = seasonRateMemo[k] ?? 0; return <div key={k} title={`${liveRate >= 0 ? "+" : ""}${liveRate.toFixed(1)} per season. ${k} is used for buildings, trade, and survival.`} className="rounded-2xl bg-white/3 p-3"><p className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[#8d8674]"><GameIcon uri={RICONS[k]} size={14} />{k}</p><p className="text-xl font-bold tabular-nums">{Math.floor(v)}</p><p className={`text-[10px] tabular-nums ${liveRate >= 0 ? "text-emerald-400" : "text-red-400"}`}>{liveRate >= 0 ? "+" : ""}{liveRate.toFixed(1)}/season</p></div>; })}</div>}
-          {panel === "Chronicle" && <div><input value={cSearch} onChange={e => setCSearch(e.target.value)} placeholder="Search the Chronicle…" className="mb-3 w-full rounded-full border border-white/8 bg-white/4 px-4 py-2 text-[12px] outline-none placeholder:text-white/25 focus:border-[#c8a84e]/40" /><div className="mb-2 flex flex-wrap gap-1">{(["all","hope","glory","grief","warning","trade","faith"] as const).map(tone => <button key={tone} onClick={() => setCTone(tone)} className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition ${cTone === tone ? "bg-[#c8a84e] text-[#1a1611]" : "bg-white/6 hover:bg-white/10"}`}>{tone === "all" ? "All" : tone}</button>)}</div><div className="space-y-1.5 text-[12px]">{filtChron.slice(0, 200).map(e => <div key={e.id} className="rounded-xl bg-white/3 px-3 py-2"><span className="mr-2 text-[10px] text-[#8d8674]">Y{e.year} {e.season}</span><strong className="text-[#c8a84e]">{e.title}</strong> <span className="text-[#bbb5a0]">{e.text}</span></div>)}</div></div>}
-          {panel === "Realm" && <RealmPanel g={g} search={rSearch} setSearch={setRSearch} pickB={pickB} center={center} />}
-          {panel === "Trade" && <TradePanel g={g} selB={selB} send={sendCaravan} dip={dipAction} baronyById={baronyById} />}
-          {panel === "War" && <WarPanel g={g} selB={selB} recruit={recruit} recruitRoyalGuard={recruitRoyalGuard} assignCpt={assignCpt} raise={raiseArmy} recall={recallArmy} disband={disbandArmy} assault={assaultSiege} dip={dipAction} />}
-          {panel === "Settlement" && <SettPanel s={selS} b={selB} g={g} center={center} setPanel={setPanel} enterBuildMode={() => { setBuildMode(true); setPanel("Build"); center(selS.x, selS.y, 1.4); }} />}
-          {panel === "Barony" && <BarPanel b={selB} g={g} center={center} pickS={pickS} setPanel={setPanel} />}
-          {panel === "Villager" && selC && <VillPanel c={selC} g={g} center={center} tab={cTab} setTab={setCTab} settlementById={settlementById} />}
-          {panel === "Crown" && <CrownPanel g={g} grantTitle={grantTitle} resolveCrisis={resolveCrownCrisis} recruitRoyalGuard={recruitRoyalGuard} baronyById={baronyById} />}
-          {panel === "Factions" && <FactionRepPanel g={g} home={home} baronyById={baronyById} />}
-          {panel === "Faith" && <FaithPanel g={g} worship={worship} councilFaith={councilFaith} rulerPath={g.ruler.path} />}
+          </div>
         </div>
       )}
 
@@ -2472,7 +2169,11 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
       {g.evt && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/82 p-4">
           <div className="w-full max-w-lg overflow-hidden rounded-3xl border border-white/10 bg-[#0e0d0b] shadow-2xl">
-            {g.evt.crisis && <div className="flex h-44 w-full items-center justify-center bg-gradient-to-b from-red-950/50 to-[#0e0d0b]"><GameIcon uri={UI_ICONS.warning} size={52} tile={false} /></div>}
+            <div className="relative flex h-40 w-full items-center justify-center overflow-hidden">
+              <img src={sImg(home.type, home.home, g.season)} alt="" className="absolute inset-0 h-full w-full object-cover opacity-50" draggable={false} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#0e0d0b] via-black/45 to-black/55" />
+              <div className="relative z-10">{g.evt.crisis ? <GameIcon uri={UI_ICONS.warning} size={52} tile={false} /> : <GameIcon uri={SETTLEMENT_ICONS.city} size={48} tile={false} />}</div>
+            </div>
             <div className="p-6">
               <p className="text-[9px] uppercase tracking-[0.35em] text-[#c8a84e]">Year {g.year} · {g.season}</p>
               <h2 className="mt-1 text-xl font-bold">{g.evt.title}</h2>
@@ -2506,7 +2207,7 @@ const BUILD_PLACE_RADIUS: Record<string, number> = { homes: 70, lumber: 80, farm
 }
 
 /* ───────── panels ───────── */
-function HousePanel({ g, living, center, home, setPanel, houseName, bannerIcon, rulerPortrait }: { g: GS; living: Family[]; center: (x: number, y: number, z?: number) => void; home: Settlement; setPanel: (p: Panel) => void; houseName: string; bannerIcon: string; rulerPortrait?: PortraitChoice }) {
+function HousePanel({ g, living, home, setPanel, houseName, bannerIcon, rulerPortrait }: { g: GS; living: Family[]; home: Settlement; setPanel: (p: Panel) => void; houseName: string; bannerIcon: string; rulerPortrait?: PortraitChoice }) {
   return (
     <div className="grid gap-6 md:grid-cols-[290px_1fr]">
       <div className="space-y-4">
@@ -2518,14 +2219,14 @@ function HousePanel({ g, living, center, home, setPanel, houseName, bannerIcon, 
         </div>
         <div className="flex gap-2">{living.slice(0, 4).map((m, i) => <div key={m.id} className="flex flex-col items-center"><img src={portrait(m, i, rulerPortrait)} alt={m.name} className="h-12 w-10 rounded-lg border border-[#c8a84e]/25 object-cover" onError={(e) => { (e.target as HTMLImageElement).src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='48'%3E%3Crect fill='%233a2a1a' width='40' height='48' rx='8'/%3E%3Ctext x='20' y='30' text-anchor='middle' fill='%23c8a84e' font-size='18' font-family='sans-serif'%3E${encodeURIComponent(m.name.split(" ")[0][0])}%3C/text%3E%3C/svg%3E`; }} /><span className="mt-0.5 max-w-12 truncate text-[9px]">{m.name.split(" ")[0]}</span></div>)}</div>
         <div className="flex gap-1">{(["Family", "Citizens", "Alerts"] as const).map(p => <button key={p} onClick={() => setPanel(p)} className="flex-1 rounded-lg bg-white/6 py-1.5 text-[11px] font-semibold hover:bg-white/12">{p}</button>)}</div>
-        <button onClick={() => center(home.x, home.y, 1.3)} className="w-full rounded-lg bg-[#c8a84e] py-2 text-[12px] font-semibold text-[#1a1611]">Zoom into Hearthmere</button>
+        <button onClick={() => setPanel("Settlement")} className="w-full rounded-lg bg-[#c8a84e] py-2 text-[12px] font-semibold text-[#1a1611]">Open Hearthmere</button>
       </div>
       <div className="space-y-2">{(Object.entries(g.rep) as [string, number][]).map(([k, v]) => <div key={k}><div className="mb-0.5 flex justify-between text-[10px] uppercase tracking-wider text-[#8d8674]"><span>{k}</span><span>{v}</span></div><div className="h-1.5 rounded-full bg-white/8"><div className="h-full rounded-full bg-gradient-to-r from-[#9a7a30] to-[#c8a84e]" style={{ width: `${v}%` }} /></div></div>)}</div>
     </div>
   );
 }
 
-function RealmPanel({ g, search, setSearch, pickB, center }: { g: GS; search: string; setSearch: (s: string) => void; pickB: (b: Barony, f?: boolean) => void; center: (x: number, y: number, z?: number) => void }) {
+function RealmPanel({ g, search, setSearch, pickB }: { g: GS; search: string; setSearch: (s: string) => void; pickB: (b: Barony, f?: boolean) => void }) {
   const q = search.trim().toLowerCase();
   const list = q ? g.baronies.filter(b => `${b.house} ${b.name} ${b.region}`.toLowerCase().includes(q)) : g.baronies;
   return (
@@ -2533,7 +2234,7 @@ function RealmPanel({ g, search, setSearch, pickB, center }: { g: GS; search: st
       <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search all 50 baronies…" className="mb-3 w-full rounded-full border border-white/8 bg-white/4 px-4 py-2 text-[12px] outline-none placeholder:text-white/25 focus:border-[#c8a84e]/40" />
       <div className="grid gap-1.5 md:grid-cols-2 lg:grid-cols-3">
         {list.map(b => (
-          <button key={b.id} onClick={() => { pickB(b); center(b.x, b.y, 0.75); }} className="flex items-center gap-2 rounded-xl bg-white/3 px-3 py-2 text-left transition hover:bg-white/7">
+          <button key={b.id} onClick={() => pickB(b)} className="flex items-center gap-2 rounded-xl bg-white/3 px-3 py-2 text-left transition hover:bg-white/7">
             <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full" style={{ background: b.color }}><GameIcon uri={BANNER_URI[b.banner] ?? BANNER_FALLBACK} size={18} tile={false} /></span>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[12px] font-semibold">{b.house}</span>
@@ -2651,7 +2352,7 @@ function WarPanel({ g, selB, recruit, recruitRoyalGuard, assignCpt, raise, recal
   );
 }
 
-function SettPanel({ s, b, g, center, setPanel, enterBuildMode }: { s: Settlement; b: Barony; g: GS; center: (x: number, y: number, z?: number) => void; setPanel: (p: Panel) => void; enterBuildMode?: () => void }) {
+function SettPanel({ s, b, g, setPanel }: { s: Settlement; b: Barony; g: GS; setPanel: (p: Panel) => void }) {
   return (
     <div className="grid gap-4 md:grid-cols-[1fr_1fr]">
       <div>
@@ -2661,8 +2362,8 @@ function SettPanel({ s, b, g, center, setPanel, enterBuildMode }: { s: Settlemen
         <p className="mt-2 text-[12px]">Population <strong>{s.home ? g.pop : s.pop}</strong></p>
         <p className="text-[12px]">Ruled by <strong>{b.house}</strong> · relations {b.rel}</p>
         <div className="mt-3 flex flex-wrap gap-1.5">
-          <button onClick={() => center(s.x, s.y, 1.5)} className="rounded-lg bg-[#c8a84e] px-3 py-1.5 text-[11px] font-semibold text-[#1a1611]">Zoom in</button>
-          {s.home ? <><button onClick={() => setPanel("Build")} className="rounded-lg bg-white/6 px-3 py-1.5 text-[11px] font-semibold hover:bg-white/12">Manage</button>            <button onClick={enterBuildMode} className="flex items-center gap-1.5 rounded-lg bg-[#c8a84e]/20 px-3 py-1.5 text-[11px] font-semibold text-[#c8a84e] ring-1 ring-[#c8a84e]/30 hover:bg-[#c8a84e]/30"><GameIcon uri={UI_ICONS.map} size={12} tile={false} />Place Buildings</button></> : <>
+          <button onClick={() => setPanel("Barony")} className="rounded-lg bg-[#c8a84e] px-3 py-1.5 text-[11px] font-semibold text-[#1a1611]">Barony</button>
+          {s.home ? <><button onClick={() => setPanel("Build")} className="rounded-lg bg-white/6 px-3 py-1.5 text-[11px] font-semibold hover:bg-white/12">Manage Buildings</button></> : <>
             <button onClick={() => setPanel("Trade")} className="rounded-lg bg-white/6 px-3 py-1.5 text-[11px] font-semibold hover:bg-white/12">Trade</button>
             <button onClick={() => setPanel("War")} className="rounded-lg bg-red-900/50 px-3 py-1.5 text-[11px] font-semibold text-red-200 hover:bg-red-800/50">War</button>
             <button onClick={() => setPanel("Barony")} className="rounded-lg bg-white/6 px-3 py-1.5 text-[11px] font-semibold hover:bg-white/12">Barony</button>
@@ -2674,7 +2375,7 @@ function SettPanel({ s, b, g, center, setPanel, enterBuildMode }: { s: Settlemen
   );
 }
 
-function BarPanel({ b, g, center, pickS, setPanel }: { b: Barony; g: GS; center: (x: number, y: number, z?: number) => void; pickS: (s: Settlement, f?: boolean) => void; setPanel: (p: Panel) => void }) {
+function BarPanel({ b, g, pickS, setPanel }: { b: Barony; g: GS; pickS: (s: Settlement, f?: boolean) => void; setPanel: (p: Panel) => void }) {
   const allied = g.alliances.find(a => a.bid === b.id);
   return (
     <div className="grid gap-5 md:grid-cols-[1fr_1fr]">
@@ -2697,7 +2398,7 @@ function BarPanel({ b, g, center, pickS, setPanel }: { b: Barony; g: GS; center:
       <div>
         <p className="mb-1 text-[10px] uppercase tracking-wider text-[#8d8674]">Holdings ({g.settlements.filter(s => s.bid === b.id).length})</p>
         <div className="space-y-1">{g.settlements.filter(s => s.bid === b.id).map(s => (
-          <button key={s.id} onClick={() => { pickS(s); center(s.x, s.y, 1.2); }} className="flex w-full items-center justify-between rounded-xl bg-white/3 px-3 py-2 text-left text-[12px] hover:bg-white/7">
+          <button key={s.id} onClick={() => pickS(s)} className="flex w-full items-center justify-between rounded-xl bg-white/3 px-3 py-2 text-left text-[12px] hover:bg-white/7">
             <span className="flex items-center gap-2"><GameIcon uri={sIcon(s.type, s.home)} size={16} tile={false} /><span className="font-medium">{s.name}</span></span>
             <span className="text-[10px] capitalize text-[#bbb5a0]">{s.type} · {s.pop}</span>
           </button>
@@ -2707,7 +2408,7 @@ function BarPanel({ b, g, center, pickS, setPanel }: { b: Barony; g: GS; center:
   );
 }
 
-function VillPanel({ c, g, center, tab, setTab, settlementById }: { c: Citizen; g: GS; center: (x: number, y: number, z?: number) => void; tab: "Info" | "Skills" | "Memories"; setTab: (t: "Info" | "Skills" | "Memories") => void; settlementById: Map<string, Settlement> }) {
+function VillPanel({ c, g, tab, setTab, settlementById }: { c: Citizen; g: GS; tab: "Info" | "Skills" | "Memories"; setTab: (t: "Info" | "Skills" | "Memories") => void; settlementById: Map<string, Settlement> }) {
   const st = OCC_STYLE[c.occ] ?? { tunic: "#666", tool: "•" };
   const s = settlementById.get(c.sid);
   return (
@@ -2717,7 +2418,6 @@ function VillPanel({ c, g, center, tab, setTab, settlementById }: { c: Citizen; 
         <p className="mt-2 text-[11px] text-[#8d8674]">Traits: {c.traits.join(", ")}</p>
         <p className="text-[11px] text-[#bbb5a0]">Lives in {s?.name}</p>
         <Meter l="Mood" v={c.mood} />
-        <button onClick={() => s && center(s.x, s.y, 1.6)} className="mt-3 w-full rounded-lg bg-[#c8a84e] py-2 text-[11px] font-semibold text-[#1a1611]">Zoom to their village</button>
       </div>
       <div>
         <div className="mb-3 flex gap-1">{(["Info", "Skills", "Memories"] as const).map(t => <button key={t} onClick={() => setTab(t)} className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold ${tab === t ? "bg-[#c8a84e] text-[#1a1611]" : "bg-white/6"}`}>{t}</button>)}</div>
@@ -3031,112 +2731,182 @@ function AC({ t, b, bt, fn }: { t: React.ReactNode; b: string; bt: React.ReactNo
   return <div className="rounded-2xl border border-white/6 bg-white/3 p-4"><h3 className="flex items-center gap-1.5 text-[13px] font-semibold text-[#c8a84e]">{t}</h3><p className="mt-1 text-[11px] text-[#bbb5a0]">{b}</p><button onClick={fn} className="mt-3 rounded-lg bg-[#c8a84e] px-4 py-1.5 text-[11px] font-semibold text-[#1a1611]">{bt}</button></div>;
 }
 
-/* ───────── memoized map markers & chrome ─────────
-   Entity objects (settlements/baronies/citizens/buildings) keep their identity
-   across simulation ticks, and handlers here are referentially stable, so
-   React.memo lets the 60fps game clock skip reconciling these subtrees unless
-   a marker's own data actually changed. */
-type HoverInfo = { x: number; y: number; label: string; sub: string };
+/* ───────── the Chronicle: a living, text-first view of the realm ─────────
+   The map is gone — in its place the Chronicle itself is the stage. The sim's
+   entries (every birth, battle, harvest and treaty) are rendered as journal
+   pages, with the realm's current state told in prose beside a few fixed
+   graphics: the house banner, the ruler's portrait, and the seat's season art. */
 
-const SettlementArt = memo(function SettlementArt({ s, house, selected, season, onPick, onDbl, onHover, onLeave }: { s: Settlement; house: string; selected: boolean; season: Season; onPick: (s: Settlement) => void; onDbl?: (s: Settlement) => void; onHover: (h: HoverInfo) => void; onLeave: () => void }) {
-  const size = sArt(s.type, s.home);
-  if (s.home) {
-    // The player's seat gets a proper scene card — full scene art, gold ring,
-    // name plate — instead of being cropped into a circle like the outposts.
-    return (
-      <button data-ui="1" onClick={() => onPick(s)} onDoubleClick={() => onDbl?.(s)} onPointerEnter={() => onHover({ x: s.x, y: s.y, label: s.name, sub: `${s.type} · ${house} · your seat` })} onPointerLeave={onLeave}
-        className="absolute -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl transition hover:brightness-110"
-        style={{ left: s.x, top: s.y, width: size, height: size * 0.45, zIndex: 5, boxShadow: selected ? "0 0 0 3px rgba(200,168,78,.85), 0 30px 70px rgba(0,0,0,.6)" : "0 0 0 2px rgba(200,168,78,.4), 0 24px 60px rgba(0,0,0,.55)" }}>
-        <img src={sImg(s.type, true, season)} alt={s.name} loading="lazy" decoding="async" className="h-full w-full object-cover" draggable={false} />
-        <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent px-2 pb-1.5 pt-6 text-center text-[13px] font-bold tracking-wide text-[#f4dfa0]">{s.name}</span>
-      </button>
-    );
+const TONE_STYLE: Record<string, { rail: string; stamp: string }> = {
+  hope:    { rail: "bg-emerald-400/80", stamp: "text-emerald-300" },
+  glory:   { rail: "bg-[#c8a84e]",      stamp: "text-[#e3c76e]" },
+  grief:   { rail: "bg-slate-400/60",    stamp: "text-slate-300" },
+  warning: { rail: "bg-amber-400/80",    stamp: "text-amber-300" },
+  trade:   { rail: "bg-teal-400/70",     stamp: "text-teal-300" },
+  faith:   { rail: "bg-violet-400/70",   stamp: "text-violet-300" },
+};
+
+function realmProse(g: GS, home: Settlement, baronyById: Map<string, Barony>): string[] {
+  const out: string[] = [];
+  const SEASON_PROSE: Record<Season, string> = {
+    Spring: "The thaw has come — brooks run high, blossom drifts through the lanes, and the first furrows are cut for planting.",
+    Summer: "Long golden days keep every hand in the fields from first light to dusk.",
+    Autumn: "Wood-smoke and apples hang in the air as the harvest is brought in.",
+    Winter: "Snow lies deep on the roofbeams; the roads are empty and the hearths burn high.",
+  };
+  out.push(SEASON_PROSE[g.season]);
+  if (g.res.food < g.pop / 2) out.push("The granaries run dangerously low — hunger whispers through the hearth-rows.");
+  const wars = g.atWar;
+  if (wars.length) {
+    const names = wars.slice(0, 3).map(bid => baronyById.get(bid)?.house ?? "a rival house");
+    out.push(`The realm is at war with ${names.join(", ")}${wars.length > 3 ? ` and ${wars.length - 3} more houses` : ""}.`);
+  } else if ((g.armies ?? []).some(a => a.ownerId === "player" && a.task !== "guard")) {
+    out.push("Your banners are on the march somewhere beyond the hills.");
   }
-  return (
-    <button data-ui="1" onClick={() => onPick(s)} onPointerEnter={() => onHover({ x: s.x, y: s.y, label: s.name, sub: `${s.type} · ${house}` })} onPointerLeave={onLeave}
-      className="absolute -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[46%] transition hover:brightness-110"
-      style={{ left: s.x, top: s.y, width: size, height: size * 0.68, zIndex: 5, boxShadow: selected ? "0 0 0 4px rgba(200,168,78,.7), 0 30px 70px rgba(0,0,0,.55)" : "0 24px 60px rgba(0,0,0,.5)" }}>
-      <img src={sImg(s.type, false, season)} alt={s.name} loading="lazy" decoding="async" className="h-full w-full object-cover" draggable={false} />
-      <span className="absolute inset-0" style={{ background: "radial-gradient(ellipse at center, transparent 52%, rgba(10,9,8,.85) 88%)" }} />
-    </button>
-  );
-});
+  const allied = g.alliances.map(a => baronyById.get(a.bid)?.house).filter(Boolean) as string[];
+  if (allied.length) out.push(`Marriage pacts and sworn bonds hold ${allied.slice(0, 3).join(", ")}${allied.length > 3 ? ` and ${allied.length - 3} more` : ""} to your house.`);
+  const dom = getDominantDeity(g.faith ?? {});
+  if (dom) out.push(`${DEITY_INFO[dom].name}, the ${DEITY_INFO[dom].title}, holds dominion over the realm's faith.`);
+  if (g.successionCrisis && !g.successionCrisis.resolved) out.push("The Crown itself is contested — claimants press their causes from every hall.");
+  if (g.civilWarActive) out.push("The realm burns in civil war; loyalties are bought with blood.");
+  const tense = (g.factions ?? []).filter(f => f.aggression > 40);
+  if (tense.length) out.push(`Unrest stirs among ${tense.slice(0, 2).map(f => `“${f.name}”`).join(" and ")}.`);
+  return out;
+}
 
-const SettlementMarker = memo(function SettlementMarker({ s, house, selected, showName, yOffset, nameFont, onPick, onDbl, onHover, onLeave }: { s: Settlement; house: string; selected: boolean; showName: boolean; yOffset: number; nameFont: number; onPick: (s: Settlement) => void; onDbl: (s: Settlement) => void; onHover: (h: HoverInfo) => void; onLeave: () => void }) {
-  const size = s.home ? 34 : s.type === "city" ? 32 : s.type === "town" ? 28 : s.type === "village" ? 24 : 20;
+function Stat({ icon, label, value }: { icon?: string; label: string; value: string }) {
   return (
-    <button data-ui="1" onClick={() => onPick(s)} onDoubleClick={() => onDbl(s)}
-      onPointerEnter={() => onHover({ x: s.x, y: s.y, label: s.name, sub: `${s.type} · ${house}` })} onPointerLeave={onLeave}
-      className="absolute flex -translate-x-1/2 flex-col items-center" style={{ left: s.x, top: s.y - yOffset, zIndex: 16 }}>
-      <span className="grid place-items-center rounded-full shadow-xl transition hover:scale-110" style={{ width: size, height: size, background: s.home ? "#6b1f1f" : "rgba(20,18,15,.9)", border: selected ? "2.5px solid #c8a84e" : s.home ? "2.5px solid #c8a84e" : "2px solid rgba(200,168,78,.4)" }}><GameIcon uri={sIcon(s.type, s.home)} size={size * 0.56} tile={false} /></span>
-      {showName && <span className="mt-1 whitespace-nowrap rounded-full bg-black/75 px-2.5 py-0.5 font-semibold text-[#eee4d0]" style={{ fontSize: nameFont }}>{s.name}</span>}
-    </button>
+    <div className="rounded-xl border border-white/6 bg-[#12100d]/90 p-2.5 text-center transition hover:border-[#c8a84e]/30">
+      {icon && <span className="mb-0.5 flex items-center justify-center"><GameIcon uri={icon} size={14} tile={false} /></span>}
+      <p className="text-[15px] font-bold leading-tight tabular-nums text-[#eee4d0]">{value}</p>
+      <p className="mt-0.5 text-[8.5px] uppercase tracking-wider text-[#8d8674]">{label}</p>
+    </div>
   );
-});
+}
 
-const BaronyCrest = memo(function BaronyCrest({ b, selected, size, topOffset, allied, atWar, crestUri, onPick, onDbl, onHover, onLeave }: { b: Barony; selected: boolean; size: number; topOffset: number; allied: boolean; atWar: boolean; crestUri: string; onPick: (b: Barony) => void; onDbl: (b: Barony) => void; onHover: (h: HoverInfo) => void; onLeave: () => void }) {
+function QuickBtn({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <button data-ui="1" onClick={() => onPick(b)} onDoubleClick={() => onDbl(b)}
-      onPointerEnter={() => onHover({ x: b.x, y: b.y - size, label: b.house, sub: `${b.name} · ${b.region}` })} onPointerLeave={onLeave}
-      className="absolute grid -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full shadow-2xl transition hover:scale-110"
-      style={{ left: b.x, top: b.y - topOffset, width: size, height: size, background: b.color, border: selected ? `${size * 0.07}px solid #c8a84e` : `${size * 0.05}px solid rgba(0,0,0,.55)`, zIndex: 18 }}>
-      <GameIcon uri={crestUri} size={size * 0.48} tile={false} />
-      {allied && <span className="absolute -bottom-1 -right-1 grid h-1/3 w-1/3 place-items-center rounded-full bg-emerald-500 text-[50%] text-black">✓</span>}
-      {atWar && <span className="absolute -bottom-1 -right-1 grid h-1/3 w-1/3 place-items-center rounded-full bg-red-600"><GameIcon uri={ACTION_ICONS.raid} size={size * 0.15} tile={false} /></span>}
-    </button>
+    <button onClick={onClick} className="btn-press rounded-xl border border-white/8 bg-white/4 px-3 py-2.5 text-[11px] font-semibold text-[#eee4d0] transition hover:border-[#c8a84e]/40 hover:bg-[#c8a84e]/10 hover:text-[#c8a84e]">{label}</button>
   );
-});
+}
 
-const CitizenOrbit = memo(function CitizenOrbit({ c, sx, sy, selected, season, tunic, onPick, onHover, onLeave }: { c: Citizen; sx: number; sy: number; selected: boolean; season: Season; tunic: string; onPick: (c: Citizen) => void; onHover: (h: HoverInfo) => void; onLeave: () => void }) {
-  const wear = SEASON_WEAR[season];
-  const tunicCol = shiftHex(tunic, wear.tunicDelta);
+const PORTRAIT_FALLBACK = (name: string) => `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='48'%3E%3Crect fill='%233a2a1a' width='40' height='48' rx='8'/%3E%3Ctext x='20' y='30' text-anchor='middle' fill='%23c8a84e' font-size='18' font-family='sans-serif'%3E${encodeURIComponent(name.split(" ")[0][0])}%3C/text%3E%3C/svg%3E`;
+
+function ChronicleView({ g, home, baronyById, houseName, bannerIcon, rulerPortrait, onToggle, hidden }: { g: GS; home: Settlement; baronyById: Map<string, Barony>; houseName: string; bannerIcon: string; rulerPortrait?: PortraitChoice; onToggle: (p: Panel) => void; hidden?: boolean }) {
+  const prose = realmProse(g, home, baronyById);
+  const entries = g.chronicle.slice(0, 16);
+  const m = SEASON_META[g.season];
+  const dom = getDominantDeity(g.faith ?? {});
+  const hostSize = g.army.militia + g.army.archers + g.army.spearmen + g.army.knights + g.army.royalGuard;
+  if (hidden) return null;
   return (
-    <div className="orbit" style={{ left: sx, top: sy, zIndex: 14 }}>
-      <div className="orbit-arm" style={{ animationDuration: `${c.dur}s`, animationDelay: `-${c.phase}s`, animationDirection: c.rev ? "reverse" : "normal" }}>
-        <div className="orbit-pos" style={{ transform: `translateX(${c.orbit}px)` }}>
-          <div className="orbit-up" style={{ animationDuration: `${c.dur}s`, animationDelay: `-${c.phase}s`, animationDirection: c.rev ? "normal" : "reverse" }}>
-            <button data-ui="1" onClick={() => onPick(c)} onPointerEnter={() => onHover({ x: sx, y: sy - 40, label: c.name, sub: c.occ })} onPointerLeave={onLeave} className={`villager ${selected ? "v-sel" : ""}`} title={`${c.name} · ${c.occ}`}>
-              <span className="v-bob" style={{ animationDelay: `-${(c.phase % 1).toFixed(2)}s` }}>
-                {wear.layer === "cloak" && <span className="v-cloak" style={{ background: shiftHex(tunic, -52) }} />}
-                <span className="v-head" />
-                {wear.layer === "cloak" && <span className="v-hood" style={{ background: shiftHex(tunic, -44) }} />}
-                {wear.layer === "hood" && <span className="v-hood-rain" style={{ background: shiftHex(tunic, -28) }} />}
-                <span className="v-torso" style={{ background: tunicCol }} />
-                {wear.layer === "cloak" && <span className="v-collar" style={{ background: "#e8e2d6" }} />}
-                {wear.layer === "shawl" && <span className="v-shawl" style={{ background: shiftHex(tunic, 12) }} />}
-                <span className="v-legL" /><span className="v-legR" />
-              </span>
-            </button>
+    <div className="absolute inset-0 overflow-y-auto bg-[#0a0908]">
+      {/* soft ambient glows behind the journal */}
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_at_18%_8%,rgba(200,168,78,0.07),transparent_55%),radial-gradient(ellipse_at_85%_92%,rgba(107,156,196,0.05),transparent_50%)]" />
+      <div className="relative mx-auto w-full max-w-6xl px-4 pb-36 pt-[88px] sm:px-8">
+        {/* ══ header: banner, house name, ruler ══ */}
+        <header className="flex flex-wrap items-center gap-4">
+          <span className="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-[#a43a39] to-[#4b1219] shadow-lg ring-2 ring-[#c8a84e]/40"><GameIcon uri={bannerIcon} size={40} tile={false} /></span>
+          <div className="min-w-0">
+            <p className="text-[9px] uppercase tracking-[0.4em] text-[#c8a84e]/80">The living chronicle of</p>
+            <h1 className="font-serif text-2xl font-bold tracking-wide text-[#eee4d0] sm:text-3xl">House {houseName}</h1>
+            <p className="mt-0.5 text-[11px] italic text-[#8d8674]">&ldquo;{g.motto}&rdquo;</p>
           </div>
+          <div className="ml-auto flex items-center gap-3">
+            <div className="text-right">
+              <p className="text-[12px] font-semibold text-[#c8a84e]">{g.ruler.name}</p>
+              <p className="text-[10px] text-[#8d8674]">{g.rank} · {renown(g.rep.respect)} · Prestige {g.prestige}</p>
+            </div>
+            <img src={portrait(g.ruler, 0, rulerPortrait)} alt={g.ruler.name} className="h-12 w-10 rounded-lg border border-[#c8a84e]/30 object-cover" onError={(e) => { (e.target as HTMLImageElement).src = PORTRAIT_FALLBACK(g.ruler.name); }} />
+          </div>
+        </header>
+
+        {/* ══ day marker ══ */}
+        <div className="mt-7 flex items-center gap-3">
+          <span className="text-[16px]" style={{ filter: `drop-shadow(0 0 8px ${m.glow})` }}>{m.icon}</span>
+          <p className="text-[11px] uppercase tracking-[0.3em] text-[#8d8674]">Year {g.year} · {g.season} · Day {Math.floor(g.day)} of {DAYS_PER_SEASON}</p>
+          <span className="h-px flex-1 bg-gradient-to-r from-[#c8a84e]/40 to-transparent" />
+        </div>
+
+        <div className="mt-4 grid gap-6 lg:grid-cols-[1fr_330px]">
+          {/* ══ the chronicle feed — the story itself ══ */}
+          <section className="space-y-2.5">
+            {entries.length === 0 && (
+              <div className="rounded-2xl border border-dashed border-white/10 p-10 text-center text-[13px] text-[#8d8674]">The Chronicle lies blank. Press ▶ and let the years write themselves.</div>
+            )}
+            {entries.map(e => {
+              const ts = TONE_STYLE[e.tone] ?? TONE_STYLE.hope;
+              return (
+                <article key={e.id} className="chron-entry relative overflow-hidden rounded-xl border border-white/6 bg-[#12100d]/90 p-4 pl-5 shadow-md transition hover:border-[#c8a84e]/25">
+                  <span className={`absolute left-0 top-3 bottom-3 w-[3px] rounded-full ${ts.rail}`} />
+                  <p className="flex items-center gap-2 text-[9px] uppercase tracking-[0.25em] text-[#8d8674]">Year {e.year} · {e.season}<span className={ts.stamp}>✦</span></p>
+                  <h3 className="mt-1 font-serif text-[14px] font-bold leading-snug text-[#eee4d0]">{e.title}</h3>
+                  <p className="mt-1 text-[12.5px] leading-relaxed text-[#bbb5a0]">{e.text}</p>
+                </article>
+              );
+            })}
+            {entries.length > 0 && (
+              <button onClick={() => onToggle("Chronicle")} className="btn-press w-full rounded-xl border border-[#c8a84e]/25 bg-[#c8a84e]/10 py-2.5 text-[11px] font-semibold text-[#c8a84e] transition hover:bg-[#c8a84e]/20">Read the full Chronicle — search & filters →</button>
+            )}
+          </section>
+
+          {/* ══ sidebar ══ */}
+          <aside className="space-y-4">
+            <div className="rounded-2xl border border-[#c8a84e]/15 bg-[#12100d]/90 p-4">
+              <p className="text-[9px] uppercase tracking-[0.3em] text-[#c8a84e]/80">The realm today</p>
+              <div className="mt-2 space-y-1.5">
+                {prose.map((line, i) => <p key={i} className="text-[12px] leading-relaxed text-[#bbb5a0]">{i === 0 ? <span className="italic text-[#eee4d0]">{line}</span> : line}</p>)}
+              </div>
+            </div>
+
+            {/* the seat — one of the few pictures the realm keeps */}
+            <div className="overflow-hidden rounded-2xl border border-[#c8a84e]/20 shadow-xl">
+              <div className="relative">
+                <img src={sImg(home.type, true, g.season)} alt={home.name} className="h-36 w-full object-cover" draggable={false} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                <span className="absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[9px] uppercase tracking-wider text-[#c8a84e]">{m.icon} {g.season}</span>
+              </div>
+              <button data-ui="1" onClick={() => onToggle("Settlement")} className="flex w-full items-center justify-between bg-black/40 px-3 py-2 text-left transition hover:bg-black/60">
+                <span className="text-[12px] font-semibold text-[#eee4d0]">{home.name}</span>
+                <span className="text-[10px] capitalize text-[#8d8674]">{home.type} · your seat</span>
+              </button>
+            </div>
+
+            {/* the house at a glance */}
+            <div className="grid grid-cols-4 gap-2">
+              <Stat icon={UI_ICONS.pop} label="People" value={String(g.pop)} />
+              <Stat icon={UI_ICONS.host} label="Host" value={String(hostSize)} />
+              <Stat icon={RESOURCE_ICONS.silver} label="Silver" value={String(Math.floor(g.res.silver))} />
+              <Stat label="Prestige" value={String(g.prestige)} />
+            </div>
+
+            {/* news of the realm */}
+            <div className="rounded-2xl border border-white/6 bg-[#12100d]/90 p-4">
+              <p className="text-[9px] uppercase tracking-[0.3em] text-[#c8a84e]/80">News of the realm</p>
+              <ul className="mt-2 space-y-1.5 text-[11.5px]">
+                {g.atWar.length > 0
+                  ? <li className="flex items-center gap-2 text-red-300"><GameIcon uri={ACTION_ICONS.raid} size={13} tile={false} />War: {g.atWar.map(id => baronyById.get(id)?.house ?? "?").join(", ")}</li>
+                  : <li className="text-emerald-300">✦ At peace across the realm</li>}
+                {g.alliances.length > 0 && <li className="text-emerald-300/90">◆ Allied with {g.alliances.map(a => baronyById.get(a.bid)?.house ?? "?").join(", ")}</li>}
+                {g.vassals.length > 0 && <li className="text-[#c8a84e]">♜ {g.vassals.length} vassal{g.vassals.length === 1 ? "" : "s"} kneel to the Crown</li>}
+                {g.caravans.length > 0 && <li className="text-[#bbb5a0]">⚑ {g.caravans.length} caravan{g.caravans.length === 1 ? "" : "s"} on the road</li>}
+                {dom && <li className="text-violet-300">✧ {DEITY_INFO[dom].name} holds dominion</li>}
+                {(g.factions ?? []).filter(f => f.aggression > 40).map(f => <li key={f.id} className="text-amber-300">⚠ “{f.name}” stirs ({f.members})</li>)}
+              </ul>
+            </div>
+
+            {/* quick rooms */}
+            <div className="grid grid-cols-2 gap-2">
+              <QuickBtn label="Your House" onClick={() => onToggle("House")} />
+              <QuickBtn label="War Council" onClick={() => onToggle("War")} />
+              <QuickBtn label="The Faith" onClick={() => onToggle("Faith")} />
+              <QuickBtn label="Chronicle" onClick={() => onToggle("Chronicle")} />
+            </div>
+          </aside>
         </div>
       </div>
     </div>
   );
-});
-
-const BuildingMarker = memo(function BuildingMarker({ pb, icon, radius, onRemove }: { pb: PlacedBuilding; icon: string; radius: number; onRemove: (id: string) => void }) {
-  return (
-    <div data-ui="1" className="pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2" style={{ left: pb.x, top: pb.y, zIndex: 12 }}>
-      <div className="grid place-items-center rounded-xl border border-[#c8a84e]/30 bg-[#1a1611]/80 shadow-lg transition hover:scale-110 hover:border-[#c8a84e]/70" style={{ width: radius * 0.7, height: radius * 0.7 }} title={`${pb.name} (Lv ${pb.level}) — Click to remove`} onClick={(e) => { e.stopPropagation(); onRemove(pb.id); }}>
-        <GameIcon uri={icon} size={radius * 0.42} />
-      </div>
-      <span className="pointer-events-none block -translate-x-1/2 whitespace-nowrap text-center text-[9px] font-semibold text-[#c8a84e]" style={{ left: "50%", position: "relative" }}>{pb.name}</span>
-    </div>
-  );
-});
-
-const MapOverlaySvg = memo(function MapOverlaySvg({ borders, roads }: { borders: { d: string; col: string; w: number }[]; roads: { key: string; x1: number; y1: number; x2: number; y2: number; stroke: string; width: number; dash: string }[] }) {
-  return (
-    <svg className="pointer-events-none absolute inset-0" width={W} height={H}>
-      {borders.map((b, i) => <path key={i} d={b.d} stroke={b.col} strokeWidth={b.w} fill="none" strokeDasharray="14 10" />)}
-      {roads.map(r => <line key={r.key} x1={r.x1} y1={r.y1} x2={r.x2} y2={r.y2} stroke={r.stroke} strokeWidth={r.width} strokeDasharray={r.dash} />)}
-    </svg>
-  );
-});
-
-const MinimapDots = memo(function MinimapDots({ baronies, atWar, alliances }: { baronies: Barony[]; atWar: string[]; alliances: Alliance[] }) {
-  return <>{baronies.map(b => <span key={b.id} className="absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full" style={{ left: `${b.x / W * 100}%`, top: `${b.y / H * 100}%`, background: atWar.includes(b.id) ? "#e05a4a" : alliances.some(a => a.bid === b.id) ? "#57c07a" : b.color }} />)}</>;
-});
+}
 
 /* ── animated season badge: mini-icon ring with a days-to-next-season countdown ── */
 const SeasonBadge = memo(function SeasonBadge({ season, next, daysLeft, pct }: { season: Season; next: Season; daysLeft: number; pct: number }) {
@@ -3156,9 +2926,9 @@ const SeasonBadge = memo(function SeasonBadge({ season, next, daysLeft, pct }: {
   );
 });
 
-const Dock = memo(function Dock({ panel, rank, onToggle, onHome }: { panel: Panel; rank: string; onToggle: (p: Panel) => void; onHome: () => void }) {
+const Dock = memo(function Dock({ panel, rank, onToggle, onHome, disabled }: { panel: Panel; rank: string; onToggle: (p: Panel) => void; onHome: () => void; disabled?: boolean }) {
   return (
-    <nav data-ui="1" className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-0.5 rounded-2xl border border-white/8 bg-[#0e0d0b]/90 p-1.5 shadow-[0_16px_50px_rgba(0,0,0,.55)] backdrop-blur-2xl">
+    <nav data-ui="1" aria-hidden={disabled} inert={disabled} className="dock-scroll absolute bottom-4 left-1/2 z-30 flex max-w-[calc(100vw-1rem)] -translate-x-1/2 items-center gap-0.5 overflow-x-auto rounded-2xl border border-white/8 bg-[#0e0d0b]/90 p-1.5 shadow-[0_16px_50px_rgba(0,0,0,.55)] backdrop-blur-2xl">
       {(rank === "King of the Realm" || rank === "Regional Lord") && <button onClick={() => onToggle("Crown")} className={`btn-press flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[12px] font-semibold transition ${panel === "Crown" ? "bg-[#c8a84e] text-[#1a1611]" : "bg-amber-900/60 text-amber-200 hover:bg-amber-800/60"}`}><GameIcon uri={DOCK_ICONS.Crown} size={14} tile={false} />Crown</button>}
       {([["Build", "Build", "1"], ["Training", "Training", "2"], ["Council", "Council", "3"], ["Trade", "Trade", "4"], ["War", "War", "5"], ["Faith", "Faith", "6"], ["Factions", "Factions", "7"], ["Resources", "Resources", "8"], ["Chronicle", "Chronicle", "9"]] as const).map(([id, label, key]) => (
         <button key={id} onClick={() => onToggle(id)} title={`${label} [${key}]`} className={`btn-press relative flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[12px] font-semibold transition ${panel === id ? "bg-[#c8a84e] text-[#1a1611]" : "hover:bg-white/8"}`}><GameIcon uri={DOCK_ICONS[id as keyof typeof DOCK_ICONS]} size={14} tile={false} />{label}<span className="dock-key absolute top-0.5 right-1 text-[8px] opacity-30">{key}</span></button>

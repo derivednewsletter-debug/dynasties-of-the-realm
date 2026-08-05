@@ -53,11 +53,10 @@ html { scrollbar-width: thin; scrollbar-color: rgba(200, 168, 78, 0.28) transpar
 
 /* ── Panel slide-up animation ── */
 @keyframes panelSlideUp {
-  from { opacity: 0; transform: translateX(-50%) translateY(20px); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 .drawer {
-  animation: panelSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   will-change: transform, opacity;
   contain: layout style;
 }
@@ -246,6 +245,15 @@ html { scrollbar-width: thin; scrollbar-color: rgba(200, 168, 78, 0.28) transpar
   animation: fadeInUp 0.4s ease-out;
 }
 
+/* ── Chronicle journal entries: new pages ink themselves in ── */
+@keyframes chronIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.chron-entry {
+  animation: chronIn 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 /* ── Skeleton pulse ── */
 @keyframes skeletonPulse {
   0%, 100% { background-color: rgba(255,255,255,0.04); }
@@ -275,12 +283,6 @@ html { scrollbar-width: thin; scrollbar-color: rgba(200, 168, 78, 0.28) transpar
 
 /* ── Mobile responsive bottom padding ── */
 @media (max-width: 640px) {
-  .drawer {
-    left: 50% !important;
-    width: calc(100vw - 16px) !important;
-    max-height: 50vh !important;
-    border-radius: 1.25rem !important;
-  }
   nav {
     gap: 0 !important;
     padding: 0.25rem !important;
@@ -288,6 +290,12 @@ html { scrollbar-width: thin; scrollbar-color: rgba(200, 168, 78, 0.28) transpar
   nav button {
     padding: 0.375rem 0.5rem !important;
     font-size: 10px !important;
+  }
+  .dock-scroll {
+    justify-content: flex-start;
+  }
+  .dock-scroll button {
+    flex: 0 0 auto;
   }
 }
 
